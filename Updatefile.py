@@ -30,6 +30,15 @@ class GitHubUploader:
         # Background mode artifacts
         self.bg_pid_file = os.path.join(Path.home(), ".github_uploader_bg.json")
         self.bg_config_file = os.path.join(Path.home(), ".github_uploader_bg_config.json")
+        # Notifications
+        self.notifier = None
+        try:
+            if os.name == 'nt':
+                from importlib import import_module
+                toaster_mod = import_module('win10toast')
+                self.notifier = toaster_mod.ToastNotifier()
+        except Exception:
+            self.notifier = None
         
         # Thiết lập logging
         self.log_dir = os.path.join(Path.home(), ".github_uploader_logs")
@@ -128,6 +137,15 @@ class GitHubUploader:
         print(f"✅ {stdout.strip()}")
         return True
     
+    def notify(self, title, message, duration=5):
+        """Hiển thị thông báo (Windows toast nếu khả dụng; otherwise bỏ qua)"""
+        try:
+            if self.notifier is not None and os.name == 'nt':
+                # Non-blocking toast
+                self.notifier.show_toast(title, message, duration=duration, threaded=True)
+        except Exception:
+            pass
+
     # =========================
     # Background mode utilities
     # =========================
@@ -673,9 +691,11 @@ class GitHubUploader:
                     if success:
                         self.logger.info(f"Upload #{upload_count} thành công!")
                         print(f"\n✅ [{timestamp}] Auto upload #{upload_count} thành công!")
+                        self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
                     else:
                         self.logger.error(f"Upload #{upload_count} thất bại: {stderr_push}")
                         print(f"\n⚠️  [{timestamp}] Auto upload #{upload_count} thất bại")
+                        self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
                 else:
                     self.logger.debug("Không có thay đổi, bỏ qua")
                 
@@ -1178,8 +1198,10 @@ class GitHubUploader:
                         )
                         if ok:
                             self.logger.info(f"[BG] Upload #{upload_count} thành công ({timestamp})")
+                            self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
                         else:
                             self.logger.error(f"[BG] Upload #{upload_count} thất bại: {errp}")
+                            self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
                     time.sleep(interval_minutes * 60)
                 except Exception as loop_e:
                     self.logger.exception(f"[BG] Lỗi vòng lặp: {loop_e}")
