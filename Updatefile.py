@@ -11,6 +11,7 @@ import sys
 import json
 import time
 import threading
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +24,45 @@ class GitHubUploader:
         self.config = self.load_config()
         self.auto_upload_running = False
         self.auto_upload_thread = None
+        self.auto_upload_interval = None
+        self.auto_upload_prefix = None
+        
+        # Thiết lập logging
+        self.log_dir = os.path.join(Path.home(), ".github_uploader_logs")
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        log_file = os.path.join(self.log_dir, f"upload_{datetime.now().strftime('%Y%m%d')}.log")
+        
+        # Cấu hình logger
+        self.logger = logging.getLogger('GitHubUploader')
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Xóa handlers cũ nếu có
+        if self.logger.handlers:
+            self.logger.handlers.clear()
+        
+        # File handler
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        
+        # Format
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+        
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
+        
+        self.logger.info("=" * 60)
+        self.logger.info("GitHub Auto Upload Tool khởi động")
+        self.logger.info("=" * 60)
         
     def load_config(self):
         """Load cấu hình đã lưu"""
@@ -70,14 +110,17 @@ class GitHubUploader:
     
     def check_git_installed(self):
         """Kiểm tra Git đã được cài đặt chưa"""
+        self.logger.info("Kiểm tra Git...")
         success, stdout, _ = self.run_command("git --version", check=False)
         if not success:
+            self.logger.error("Git chưa được cài đặt!")
             print("❌ Git chưa được cài đặt!")
             print("\n📥 HƯỚNG DẪN CÀI ĐẶT GIT:")
             print("   🪟 Windows: https://git-scm.com/download/win")
             print("   🍎 Mac: brew install git")
             print("   🐧 Linux: sudo apt install git")
             return False
+        self.logger.info(f"Git đã cài đặt: {stdout.strip()}")
         print(f"✅ {stdout.strip()}")
         return True
     
@@ -291,7 +334,9 @@ class GitHubUploader:
         
         # Hiển thị trạng thái auto upload
         if self.auto_upload_running:
-            print("\n🟢 TỰ ĐỘNG UPLOAD: ĐANG CHẠY")
+            print("\n🟢 TỰ ĐỘNG UPLOAD: ĐANG CHẠY NỀN")
+        else:
+            print("\n⚪ TỰ ĐỘNG UPLOAD: TẮT")
         
         print("\n📋 MENU CHÍNH:")
         print("1. 🚀 Upload code lên GitHub")
@@ -300,10 +345,17 @@ class GitHubUploader:
         print("4. 🔐 Hướng dẫn xác thực GitHub")
         print("5. 💾 Quản lý cấu hình đã lưu")
         print("6. 📚 Hướng dẫn cài đặt & sử dụng")
-        print("7. ⏰ Tự động upload theo thời gian")
+        print("7. ⏰ Cấu hình tự động upload")
+        
+        if self.auto_upload_running:
+            print("8. 🔴 Dừng auto upload đang chạy")
+        else:
+            print("8. 🟢 Bật auto upload (chạy nền)")
+        
+        print("9. 📄 Xem logs")
         print("0. 👋 Thoát")
         
-        return input("\n➤ Chọn chức năng (0-7): ").strip()
+        return input("\n➤ Chọn chức năng (0-9): ").strip()
     
     def show_simple_guide(self):
         """Hiển thị hướng dẫn đơn giản"""
@@ -408,56 +460,74 @@ class GitHubUploader:
         """Worker thread cho auto upload"""
         interval_seconds = interval_minutes * 60
         
+        self.logger.info(f"Auto upload worker bắt đầu - Interval: {interval_minutes} phút")
+        print(f"\n🟢 Auto upload đã bắt đầu chạy nền!")
+        print(f"⏰ Upload mỗi {interval_minutes} phút")
+        print("💡 Bạn có thể tiếp tục sử dụng các chức năng khác\n")
+        time.sleep(2)
+        
+        upload_count = 0
+        
         while self.auto_upload_running:
             try:
-                print(f"\n⏰ [{datetime.now().strftime('%H:%M:%S')}] Bắt đầu auto upload...")
+                timestamp = datetime.now().strftime('%H:%M:%S')
                 
                 # Tạo commit message với timestamp
                 commit_msg = f"{commit_prefix} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 
                 # Kiểm tra có thay đổi không
+                self.logger.debug("Kiểm tra thay đổi trong repository")
                 success, stdout, _ = self.run_command(
                     f'cd "{self.repo_path}" && git status --short',
                     check=False
                 )
                 
-                if not stdout.strip():
-                    print("   ℹ️  Không có thay đổi, bỏ qua lần này")
-                else:
-                    # Thực hiện upload
-                    if self.git_add_all():
-                        if self.git_commit(commit_msg):
-                            if self.git_push():
-                                print(f"   ✅ Upload thành công lúc {datetime.now().strftime('%H:%M:%S')}")
-                            else:
-                                print("   ❌ Lỗi khi push")
-                        else:
-                            print("   ⚠️  Không có gì để commit")
+                if stdout.strip():
+                    # Có thay đổi, thực hiện upload
+                    upload_count += 1
+                    self.logger.info(f"Phát hiện thay đổi, bắt đầu upload #{upload_count}")
+                    
+                    # Git add
+                    self.logger.debug("Git add...")
+                    self.run_command(f'cd "{self.repo_path}" && git add .', check=False)
+                    
+                    # Git commit
+                    self.logger.debug(f"Git commit: {commit_msg}")
+                    self.run_command(f'cd "{self.repo_path}" && git commit -m "{commit_msg}"', check=False)
+                    
+                    # Git push
+                    self.logger.debug(f"Git push to {self.branch}")
+                    success, stdout_push, stderr_push = self.run_command(
+                        f'cd "{self.repo_path}" && git push -u origin {self.branch}',
+                        check=False
+                    )
+                    
+                    if success:
+                        self.logger.info(f"Upload #{upload_count} thành công!")
+                        print(f"\n✅ [{timestamp}] Auto upload #{upload_count} thành công!")
                     else:
-                        print("   ❌ Lỗi khi add files")
+                        self.logger.error(f"Upload #{upload_count} thất bại: {stderr_push}")
+                        print(f"\n⚠️  [{timestamp}] Auto upload #{upload_count} thất bại")
+                else:
+                    self.logger.debug("Không có thay đổi, bỏ qua")
                 
-                # Đếm ngược đến lần upload tiếp theo
-                next_time = datetime.now().timestamp() + interval_seconds
-                
-                while self.auto_upload_running and time.time() < next_time:
-                    remaining = int(next_time - time.time())
-                    if remaining > 0:
-                        mins, secs = divmod(remaining, 60)
-                        print(f"\r   ⏳ Lần upload tiếp theo sau: {mins:02d}:{secs:02d}", end="", flush=True)
-                    time.sleep(1)
-                
-                print()  # New line sau countdown
+                # Đợi đến lần upload tiếp theo
+                self.logger.debug(f"Đợi {interval_minutes} phút đến lần upload tiếp theo")
+                time.sleep(interval_seconds)
                 
             except Exception as e:
-                print(f"\n   ❌ Lỗi: {e}")
-                time.sleep(60)  # Đợi 1 phút trước khi thử lại
+                self.logger.exception(f"Lỗi trong auto upload worker: {e}")
+                print(f"\n❌ Lỗi auto upload: {e}")
+                time.sleep(60)
+        
+        self.logger.info(f"Auto upload worker dừng - Tổng số lần upload: {upload_count}")
     
     def start_auto_upload(self):
         """Khởi động chế độ tự động upload"""
         self.clear_screen()
         self.print_banner()
         
-        print("\n⏰ TỰ ĐỘNG UPLOAD THEO THỜI GIAN")
+        print("\n⏰ CẤU HÌNH TỰ ĐỘNG UPLOAD")
         print("=" * 60)
         
         # Kiểm tra đã có cấu hình chưa
@@ -525,53 +595,241 @@ class GitHubUploader:
         if not commit_prefix:
             commit_prefix = "Auto update"
         
+        # Lưu cấu hình
+        self.auto_upload_interval = interval
+        self.auto_upload_prefix = commit_prefix
+        
         # Xác nhận
         print("\n" + "=" * 60)
-        print("📋 XÁC NHẬN:")
+        print("📋 XÁC NHẬN CẤU HÌNH:")
         print(f"   ⏰ Khoảng thời gian: Mỗi {interval} phút")
         print(f"   💬 Commit message: {commit_prefix} - [timestamp]")
         print(f"   📁 Thư mục: {self.repo_path}")
         print(f"   🔗 Repository: {self.repo_url}")
         print("=" * 60)
+        print("\n💡 Sau khi lưu, sử dụng Menu 8 để bật/tắt auto upload")
         
-        confirm = input("\n✅ Bắt đầu tự động upload? (y/n): ").lower()
-        if confirm != 'y':
+        confirm = input("\n✅ Lưu cấu hình? (y/n): ").lower()
+        if confirm == 'y':
+            print("✅ Đã lưu cấu hình auto upload!")
+            print("💡 Sử dụng Menu 8 để bật auto upload chạy nền")
+        else:
             print("❌ Đã hủy!")
+        
+        input("\n✅ Nhấn Enter để quay lại...")
+    
+    def toggle_auto_upload(self):
+        """Bật/Tắt auto upload"""
+        if self.auto_upload_running:
+            # Đang chạy -> Dừng lại
+            print("\n🔴 DỪNG AUTO UPLOAD")
+            print("=" * 60)
+            self.auto_upload_running = False
+            if self.auto_upload_thread:
+                print("⏳ Đang dừng thread...")
+                self.auto_upload_thread.join(timeout=3)
+            print("✅ Đã dừng auto upload!")
+            input("\n✅ Nhấn Enter để quay lại...")
+        else:
+            # Chưa chạy -> Bật lên
+            if not self.auto_upload_interval or not self.auto_upload_prefix:
+                print("\n⚠️  Chưa có cấu hình auto upload!")
+                print("💡 Vui lòng chạy Menu 7 để cấu hình trước")
+                input("\n✅ Nhấn Enter để quay lại...")
+                return
+            
+            if not self.repo_path or not self.repo_url:
+                print("\n⚠️  Chưa có cấu hình repository!")
+                print("💡 Vui lòng chạy Menu 1 để cấu hình trước")
+                input("\n✅ Nhấn Enter để quay lại...")
+                return
+            
+            print("\n🟢 BẬT AUTO UPLOAD")
+            print("=" * 60)
+            print(f"⏰ Upload mỗi {self.auto_upload_interval} phút")
+            print(f"💬 Message: {self.auto_upload_prefix}")
+            print(f"📁 Thư mục: {self.repo_path}")
+            print("=" * 60)
+            
+            self.auto_upload_running = True
+            self.auto_upload_thread = threading.Thread(
+                target=self.auto_upload_worker,
+                args=(self.auto_upload_interval, self.auto_upload_prefix),
+                daemon=True
+            )
+            self.auto_upload_thread.start()
+            
+            time.sleep(2)
+            input("\n✅ Nhấn Enter để quay lại menu (auto upload chạy nền)...")
+    
+    def view_logs(self):
+        """Xem logs"""
+        self.clear_screen()
+        self.print_banner()
+        
+        print("\n📄 QUẢN LÝ LOGS")
+        print("=" * 60)
+        
+        # Liệt kê các file log
+        log_files = sorted(
+            [f for f in os.listdir(self.log_dir) if f.endswith('.log')],
+            reverse=True
+        )
+        
+        if not log_files:
+            print("\n❌ Không có file log nào!")
             input("\n✅ Nhấn Enter để quay lại...")
             return
         
-        # Khởi động auto upload
-        print("\n" + "=" * 60)
-        print("🚀 BẮT ĐẦU TỰ ĐỘNG UPLOAD")
-        print("=" * 60)
-        print(f"⏰ Upload mỗi {interval} phút")
-        print("⚠️  Nhấn Ctrl+C để dừng")
+        print(f"\n📁 Thư mục logs: {self.log_dir}")
+        print(f"\n📋 Có {len(log_files)} file log:\n")
+        
+        for i, log_file in enumerate(log_files[:10], 1):  # Hiển thị 10 file gần nhất
+            file_path = os.path.join(self.log_dir, log_file)
+            file_size = os.path.getsize(file_path)
+            size_kb = file_size / 1024
+            
+            # Đọc dòng đầu và cuối
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    first_line = lines[0].strip() if lines else ""
+                    last_line = lines[-1].strip() if lines else ""
+            except:
+                first_line = ""
+                last_line = ""
+            
+            print(f"{i}. 📄 {log_file} ({size_kb:.1f} KB)")
+            if first_line:
+                print(f"   🕐 Bắt đầu: {first_line[:50]}...")
+            if last_line and last_line != first_line:
+                print(f"   🕐 Kết thúc: {last_line[:50]}...")
+            print()
+        
+        print("\nChọn:")
+        print("V [số] - Xem toàn bộ log")
+        print("T [số] - Xem 50 dòng cuối")
+        print("E [số] - Xem lỗi (ERROR)")
+        print("C - Xóa tất cả logs cũ")
+        print("O - Mở thư mục logs")
+        print("0 - Quay lại")
+        
+        choice = input("\n➤ Lựa chọn: ").strip().upper()
+        
+        if choice.startswith('V '):
+            try:
+                idx = int(choice.split()[1]) - 1
+                if 0 <= idx < len(log_files):
+                    self.display_log_content(log_files[idx])
+            except:
+                print("❌ Lựa chọn không hợp lệ!")
+        
+        elif choice.startswith('T '):
+            try:
+                idx = int(choice.split()[1]) - 1
+                if 0 <= idx < len(log_files):
+                    self.display_log_tail(log_files[idx])
+            except:
+                print("❌ Lựa chọn không hợp lệ!")
+        
+        elif choice.startswith('E '):
+            try:
+                idx = int(choice.split()[1]) - 1
+                if 0 <= idx < len(log_files):
+                    self.display_log_errors(log_files[idx])
+            except:
+                print("❌ Lựa chọn không hợp lệ!")
+        
+        elif choice == 'C':
+            confirm = input("⚠️  Xóa tất cả logs? (yes/no): ")
+            if confirm.lower() == 'yes':
+                for log_file in log_files:
+                    os.remove(os.path.join(self.log_dir, log_file))
+                print("✅ Đã xóa tất cả logs!")
+                self.logger.info("Đã xóa tất cả logs cũ")
+            input("\n✅ Nhấn Enter để quay lại...")
+        
+        elif choice == 'O':
+            # Mở thư mục logs
+            if os.name == 'nt':  # Windows
+                os.startfile(self.log_dir)
+            elif sys.platform == 'darwin':  # Mac
+                os.system(f'open "{self.log_dir}"')
+            else:  # Linux
+                os.system(f'xdg-open "{self.log_dir}"')
+            print("✅ Đã mở thư mục logs!")
+            input("\n✅ Nhấn Enter để quay lại...")
+    
+    def display_log_content(self, log_file):
+        """Hiển thị toàn bộ nội dung log"""
+        self.clear_screen()
+        self.print_banner()
+        
+        print(f"\n📄 NỘI DUNG LOG: {log_file}")
         print("=" * 60)
         
-        self.auto_upload_running = True
-        self.auto_upload_thread = threading.Thread(
-            target=self.auto_upload_worker,
-            args=(interval, commit_prefix),
-            daemon=True
-        )
-        self.auto_upload_thread.start()
+        file_path = os.path.join(self.log_dir, log_file)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                print(content)
+        except Exception as e:
+            print(f"❌ Lỗi đọc file: {e}")
+        
+        input("\n✅ Nhấn Enter để quay lại...")
+    
+    def display_log_tail(self, log_file, lines=50):
+        """Hiển thị n dòng cuối của log"""
+        self.clear_screen()
+        self.print_banner()
+        
+        print(f"\n📄 {lines} DÒNG CUỐI: {log_file}")
+        print("=" * 60)
+        
+        file_path = os.path.join(self.log_dir, log_file)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                all_lines = f.readlines()
+                tail_lines = all_lines[-lines:]
+                print(''.join(tail_lines))
+        except Exception as e:
+            print(f"❌ Lỗi đọc file: {e}")
+        
+        input("\n✅ Nhấn Enter để quay lại...")
+    
+    def display_log_errors(self, log_file):
+        """Hiển thị chỉ các dòng ERROR"""
+        self.clear_screen()
+        self.print_banner()
+        
+        print(f"\n❌ CÁC LỖI TRONG: {log_file}")
+        print("=" * 60)
+        
+        file_path = os.path.join(self.log_dir, log_file)
+        error_count = 0
         
         try:
-            # Giữ thread chính chạy
-            while self.auto_upload_running:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\n⚠️  Đang dừng tự động upload...")
-            self.auto_upload_running = False
-            if self.auto_upload_thread:
-                self.auto_upload_thread.join(timeout=5)
-            print("✅ Đã dừng!")
-            input("\n✅ Nhấn Enter để quay lại menu...")
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if 'ERROR' in line or 'EXCEPTION' in line:
+                        print(line.rstrip())
+                        error_count += 1
+            
+            if error_count == 0:
+                print("\n✅ Không có lỗi nào!")
+            else:
+                print(f"\n⚠️  Tổng số lỗi: {error_count}")
+        except Exception as e:
+            print(f"❌ Lỗi đọc file: {e}")
+        
+        input("\n✅ Nhấn Enter để quay lại...")
     
     def auto_upload(self):
         """Quy trình tự động upload"""
         self.clear_screen()
         self.print_banner()
+        
+        self.logger.info("Bắt đầu quy trình upload thủ công")
         
         print("\n🔍 KIỂM TRA HỆ THỐNG:")
         print("-" * 60)
@@ -596,8 +854,11 @@ class GitHubUploader:
                 self.repo_path = os.getcwd()
         
         if not os.path.exists(self.repo_path):
+            self.logger.error(f"Thư mục không tồn tại: {self.repo_path}")
             print(f"❌ Thư mục '{self.repo_path}' không tồn tại!")
             return False
+        
+        self.logger.info(f"Repository path: {self.repo_path}")
         
         if not self.repo_url:
             self.repo_url = input("🔗 URL GitHub Repository: ").strip()
@@ -605,11 +866,16 @@ class GitHubUploader:
                 print("❌ URL không được để trống!")
                 return False
         
+        self.logger.info(f"Repository URL: {self.repo_url}")
+        
         self.branch = input(f"🌿 Branch (Enter = {self.branch}): ").strip() or self.branch
+        self.logger.info(f"Branch: {self.branch}")
         
         commit_msg = input("💬 Commit message (Enter = tự động): ").strip()
         if not commit_msg:
             commit_msg = f"Auto update {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        self.logger.info(f"Commit message: {commit_msg}")
         
         save_cfg = input("\n💾 Lưu cấu hình này? (y/n): ").lower()
         if save_cfg == 'y':
@@ -620,7 +886,65 @@ class GitHubUploader:
                 'branch': self.branch
             }
             self.save_config()
+            self.logger.info(f"Đã lưu cấu hình: {cfg_name}")
             print("✅ Đã lưu cấu hình!")
+        
+        print("\n" + "=" * 60)
+        print("📋 XÁC NHẬN THÔNG TIN:")
+        print(f"   📁 Thư mục: {self.repo_path}")
+        print(f"   🔗 Repository: {self.repo_url}")
+        print(f"   🌿 Branch: {self.branch}")
+        print(f"   💬 Message: {commit_msg}")
+        print("=" * 60)
+        
+        confirm = input("\n✅ Xác nhận và bắt đầu upload? (y/n): ").lower()
+        if confirm != 'y':
+            self.logger.info("Upload bị hủy bởi người dùng")
+            print("❌ Đã hủy!")
+            return False
+        
+        print("\n" + "=" * 60)
+        print("🚀 BẮT ĐẦU UPLOAD...")
+        print("=" * 60)
+        
+        self.logger.info("Bắt đầu quá trình upload")
+        
+        if not self.init_git_repo():
+            self.logger.error("Lỗi khởi tạo Git repository")
+            return False
+        
+        if not self.configure_remote():
+            self.logger.error("Lỗi cấu hình remote")
+            return False
+        
+        self.show_git_status()
+        
+        if not self.git_add_all():
+            self.logger.error("Lỗi khi add files")
+            return False
+        
+        if not self.git_commit(commit_msg):
+            self.logger.error("Lỗi khi commit")
+            return False
+        
+        if not self.git_push():
+            self.logger.error("Lỗi khi push")
+            return False
+        
+        print("\n" + "=" * 60)
+        print("🎉 HOÀN TẤT! Code đã được đẩy lên GitHub thành công!")
+        print("=" * 60)
+        
+        self.logger.info("Upload thành công!")
+        self.logger.info("=" * 60)
+
+        return True, {
+            'path': self.repo_path,
+            'url': self.repo_url,
+            'branch': self.branch
+        }
+        self.save_config()
+        print("✅ Đã lưu cấu hình!")
         
         print("\n" + "=" * 60)
         print("📋 XÁC NHẬN THÔNG TIN:")
@@ -698,13 +1022,23 @@ class GitHubUploader:
             elif choice == "7":
                 self.start_auto_upload()
             
+            elif choice == "8":
+                self.toggle_auto_upload()
+            
+            elif choice == "9":
+                self.view_logs()
+            
             elif choice == "0":
                 # Dừng auto upload nếu đang chạy
                 if self.auto_upload_running:
+                    self.logger.info("Đang dừng auto upload...")
                     print("\n⚠️  Đang dừng tự động upload...")
                     self.auto_upload_running = False
                     if self.auto_upload_thread:
                         self.auto_upload_thread.join(timeout=5)
+                
+                self.logger.info("Tool đã đóng")
+                self.logger.info("=" * 60)
                 print("\n👋 Cảm ơn bạn đã sử dụng! Tạm biệt!")
                 break
             
