@@ -82,13 +82,7 @@ class GitHubUploader:
         
     def load_config(self):
         """Load cấu hình đã lưu"""
-        if os.path.exists(self.config_file):
-            try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                return {}
-        return {}
+        return self._safe_read_json(self.config_file, default={}) or {}
     
     def save_config(self):
         """Lưu cấu hình"""
@@ -97,6 +91,38 @@ class GitHubUploader:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Không thể lưu cấu hình: {e}")
+
+    def _safe_read_json(self, path, default=None):
+        """Đọc JSON an toàn; nếu lỗi JSON sẽ backup file hỏng và trả về default"""
+        if not os.path.exists(path):
+            return default
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            try:
+                # Backup file hỏng
+                bak = f"{path}.bak_{int(time.time())}"
+                try:
+                    os.replace(path, bak)
+                except Exception:
+                    pass
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.error(f"Lỗi đọc JSON {path}: {e}. Đã backup -> {bak}")
+                else:
+                    print(f"[WARN] Lỗi đọc JSON {path}: {e}. Đã backup -> {bak}")
+            except Exception:
+                pass
+            return default
+
+    def _safe_write_json(self, path, data):
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            self.logger.error(f"Không thể ghi JSON {path}: {e}")
+            return False
     
     def clear_screen(self):
         """Xóa màn hình console"""
@@ -246,34 +272,21 @@ class GitHubUploader:
             pass
 
     def _read_bg_config(self):
-        try:
-            if os.path.exists(self.bg_config_file):
-                with open(self.bg_config_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception:
-            return None
-        return None
+        return self._safe_read_json(self.bg_config_file, default=None)
 
     def _read_bg_status(self):
-        try:
-            if os.path.exists(self.bg_status_file):
-                with open(self.bg_status_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception:
-            return None
-        return None
+        return self._safe_read_json(self.bg_status_file, default=None)
 
     def _write_bg_status(self, result, message='', count=None):
         try:
             payload = {
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'result': result,  # success | failure | nochange | start | stop
+                'result': result,
                 'message': message,
             }
             if count is not None:
                 payload['upload_count'] = count
-            with open(self.bg_status_file, 'w', encoding='utf-8') as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+            self._safe_write_json(self.bg_status_file, payload)
         except Exception:
             pass
 
@@ -318,8 +331,9 @@ class GitHubUploader:
             'prefix': self.auto_upload_prefix,
         }
         try:
-            with open(self.bg_config_file, 'w', encoding='utf-8') as f:
-                json.dump(bg_cfg, f, ensure_ascii=False, indent=2)
+            ok = self._safe_write_json(self.bg_config_file, bg_cfg)
+            if not ok:
+                raise RuntimeError('write bg config failed')
         except Exception as e:
             print(f"❌ Lỗi lưu cấu hình nền: {e}")
             return False
@@ -591,11 +605,22 @@ class GitHubUploader:
             path_txt = bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else (self.repo_path or '')
             branch_txt = (bg_cfg.get('branch') if bg_cfg and bg_cfg.get('branch') else self.branch) or ''
             last_txt = ''
+            leading_icon = '🟢'
             if bg_stat and bg_stat.get('timestamp'):
-                res = bg_stat.get('result') or ''
-                res_icon = '✅' if res == 'success' else ('⚠️' if res == 'failure' else '⏳' if res == 'start' else '➖')
+                res = (bg_stat.get('result') or '').lower()
+                if res == 'success':
+                    leading_icon = '🟢'
+                    res_icon = '✅'
+                elif res == 'failure':
+                    leading_icon = '🔴'
+                    res_icon = '⚠️'
+                elif res in ('start', 'nochange'):
+                    leading_icon = '🟡'
+                    res_icon = '⏳'
+                else:
+                    res_icon = '➖'
                 last_txt = f" | last {bg_stat.get('timestamp')} {res_icon}"
-            print(f"\n🟢 {self.t('status_bg_on', 'TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY')} ({interval_txt} | msg: {prefix_txt} | dir: {path_txt} | br: {branch_txt}){last_txt}")
+            print(f"\n{leading_icon} {self.t('status_bg_on', 'TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY')} ({interval_txt} | msg: {prefix_txt} | dir: {path_txt} | br: {branch_txt}){last_txt}")
         else:
             if bg_cfg:
                 interval_txt = f"{bg_cfg.get('interval')}m" if bg_cfg.get('interval') else ""
@@ -1256,11 +1281,10 @@ class GitHubUploader:
         """Chạy vòng lặp auto upload ở chế độ nền (không cần mở tool)"""
         try:
             # Đọc cấu hình nền
-            if not os.path.exists(self.bg_config_file):
-                print("❌ Không tìm thấy cấu hình nền, thoát!")
+            cfg = self._safe_read_json(self.bg_config_file, default=None)
+            if not cfg:
+                print("❌ Không tìm thấy hoặc lỗi cấu hình nền, thoát!")
                 return 1
-            with open(self.bg_config_file, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
             self.repo_path = cfg.get('path')
             self.repo_url = cfg.get('url')
             self.branch = cfg.get('branch', 'main')
