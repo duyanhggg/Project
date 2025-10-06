@@ -27,6 +27,9 @@ class GitHubUploader:
         self.auto_upload_thread = None
         self.auto_upload_interval = None
         self.auto_upload_prefix = None
+        # Background mode artifacts
+        self.bg_pid_file = os.path.join(Path.home(), ".github_uploader_bg.json")
+        self.bg_config_file = os.path.join(Path.home(), ".github_uploader_bg_config.json")
         
         # Thiết lập logging
         self.log_dir = os.path.join(Path.home(), ".github_uploader_logs")
@@ -125,6 +128,139 @@ class GitHubUploader:
         print(f"✅ {stdout.strip()}")
         return True
     
+    # =========================
+    # Background mode utilities
+    # =========================
+    def _read_bg_pid(self):
+        try:
+            if os.path.exists(self.bg_pid_file):
+                with open(self.bg_pid_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return int(data.get('pid'))
+        except Exception:
+            return None
+        return None
+
+    def _write_bg_pid(self, pid):
+        try:
+            with open(self.bg_pid_file, 'w', encoding='utf-8') as f:
+                json.dump({'pid': pid}, f)
+        except Exception as e:
+            self.logger.error(f"Không thể ghi PID background: {e}")
+
+    def _clear_bg_pid(self):
+        try:
+            if os.path.exists(self.bg_pid_file):
+                os.remove(self.bg_pid_file)
+        except Exception:
+            pass
+
+    def _read_bg_config(self):
+        try:
+            if os.path.exists(self.bg_config_file):
+                with open(self.bg_config_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            return None
+        return None
+
+    def _is_process_running(self, pid):
+        if not pid or pid <= 0:
+            return False
+        try:
+            if os.name == 'nt':
+                # Windows: dùng tasklist để kiểm tra PID tồn tại
+                success, stdout, _ = self.run_command(f'tasklist /FI "PID eq {pid}"', check=False)
+                return success and str(pid) in stdout
+            else:
+                # POSIX
+                os.kill(pid, 0)
+                return True
+        except Exception:
+            return False
+
+    def is_background_running(self):
+        pid = self._read_bg_pid()
+        return self._is_process_running(pid)
+
+    def start_background_mode(self):
+        # Kiểm tra cấu hình cần thiết
+        if not self.repo_path or not self.repo_url:
+            print("\n⚠️  Chưa có cấu hình repository!\n💡 Vui lòng chạy Menu 1 để cấu hình trước")
+            return False
+        if not self.auto_upload_interval or not self.auto_upload_prefix:
+            print("\n⚠️  Chưa có cấu hình auto upload!\n💡 Vui lòng chạy Menu 7 để cấu hình trước")
+            return False
+
+        if self.is_background_running():
+            print("\nℹ️  Auto upload nền đang chạy rồi")
+            return True
+
+        # Ghi file cấu hình cho background
+        bg_cfg = {
+            'path': self.repo_path,
+            'url': self.repo_url,
+            'branch': self.branch,
+            'interval': self.auto_upload_interval,
+            'prefix': self.auto_upload_prefix,
+        }
+        try:
+            with open(self.bg_config_file, 'w', encoding='utf-8') as f:
+                json.dump(bg_cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"❌ Lỗi lưu cấu hình nền: {e}")
+            return False
+
+        # Khởi chạy tiến trình nền detach
+        python_exe = sys.executable
+        script_path = os.path.abspath(__file__)
+        cmd = [python_exe, script_path, "--run-background"]
+        try:
+            creationflags = 0
+            startupinfo = None
+            if os.name == 'nt':
+                # DETACHED_PROCESS(0x00000008) | CREATE_NEW_PROCESS_GROUP(0x00000200)
+                creationflags = 0x00000008 | 0x00000200
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+                startupinfo=startupinfo,
+            )
+            self._write_bg_pid(proc.pid)
+            print("\n🟢 Đã bật auto upload chạy nền! Bạn có thể tắt tool an toàn.")
+            self.logger.info(f"Bật background mode, PID={proc.pid}")
+            return True
+        except Exception as e:
+            print(f"❌ Lỗi khởi chạy nền: {e}")
+            self.logger.exception("Lỗi khởi chạy nền")
+            return False
+
+    def stop_background_mode(self):
+        pid = self._read_bg_pid()
+        if not self._is_process_running(pid):
+            print("\nℹ️  Không phát hiện tiến trình auto upload nền đang chạy")
+            self._clear_bg_pid()
+            return True
+        try:
+            if os.name == 'nt':
+                # Sử dụng taskkill để dừng tiến trình và cả nhóm tiến trình
+                self.run_command(f'taskkill /PID {pid} /T /F', check=False)
+            else:
+                os.kill(pid, 15)
+            self._clear_bg_pid()
+            print("\n✅ Đã dừng auto upload nền!")
+            self.logger.info("Đã dừng background mode")
+            return True
+        except Exception as e:
+            print(f"❌ Không thể dừng tiến trình: {e}")
+            self.logger.exception("Không thể dừng background mode")
+            return False
+
     def check_git_config(self):
         """Kiểm tra cấu hình Git"""
         success, name, _ = self.run_command("git config --global user.name", check=False)
@@ -333,11 +469,33 @@ class GitHubUploader:
         self.clear_screen()
         self.print_banner()
         
-        # Hiển thị trạng thái auto upload
-        if self.auto_upload_running:
-            print("\n🟢 TỰ ĐỘNG UPLOAD: ĐANG CHẠY NỀN")
+        # Hiển thị trạng thái auto upload (nền)
+        bg_cfg = self._read_bg_config()
+        if self.is_background_running():
+            interval_txt = f"mỗi {bg_cfg.get('interval')} phút" if bg_cfg and bg_cfg.get('interval') else "đang chạy"
+            prefix_txt = bg_cfg.get('prefix') if bg_cfg and bg_cfg.get('prefix') else (self.auto_upload_prefix or '')
+            path_txt = bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else (self.repo_path or '')
+            details = []
+            if interval_txt:
+                details.append(interval_txt)
+            if prefix_txt:
+                details.append(f"msg: {prefix_txt}")
+            if path_txt:
+                details.append(f"dir: {path_txt}")
+            print(f"\n🟢 TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY ({'; '.join(details)})")
         else:
-            print("\n⚪ TỰ ĐỘNG UPLOAD: TẮT")
+            if bg_cfg:
+                details = []
+                if bg_cfg.get('interval'):
+                    details.append(f"mỗi {bg_cfg.get('interval')} phút")
+                if bg_cfg.get('prefix'):
+                    details.append(f"msg: {bg_cfg.get('prefix')}")
+                if bg_cfg.get('path'):
+                    details.append(f"dir: {bg_cfg.get('path')}")
+                suffix = f" (cấu hình sẵn: {'; '.join(details)})" if details else ""
+                print(f"\n⚪ TỰ ĐỘNG UPLOAD NỀN: TẮT{suffix}")
+            else:
+                print("\n⚪ TỰ ĐỘNG UPLOAD NỀN: TẮT")
         
         print("\n📋 MENU CHÍNH:")
         print("1. 🚀 Upload code lên GitHub")
@@ -348,10 +506,19 @@ class GitHubUploader:
         print("6. 📚 Hướng dẫn cài đặt & sử dụng")
         print("7. ⏰ Cấu hình tự động upload")
         
-        if self.auto_upload_running:
-            print("8. 🔴 Dừng auto upload đang chạy")
+        if self.is_background_running():
+            pid = self._read_bg_pid()
+            label = f"8. 🔴 Dừng auto upload chạy nền (PID {pid})" if pid else "8. 🔴 Dừng auto upload chạy nền"
+            print(label)
         else:
-            print("8. 🟢 Bật auto upload (chạy nền)")
+            interval_txt = None
+            bg_cfg = self._read_bg_config()
+            if bg_cfg and bg_cfg.get('interval'):
+                interval_txt = f"mỗi {bg_cfg.get('interval')} phút"
+            elif self.auto_upload_interval:
+                interval_txt = f"mỗi {self.auto_upload_interval} phút"
+            suffix = f" - {interval_txt}" if interval_txt else ""
+            print(f"8. 🟢 Bật auto upload (chạy nền, vẫn chạy khi tắt tool){suffix}")
         
         print("9. 📄 Xem logs")
         print("0. 👋 Thoát")
@@ -620,48 +787,27 @@ class GitHubUploader:
         input("\n✅ Nhấn Enter để quay lại...")
     
     def toggle_auto_upload(self):
-        """Bật/Tắt auto upload"""
-        if self.auto_upload_running:
-            # Đang chạy -> Dừng lại
-            print("\n🔴 DỪNG AUTO UPLOAD")
+        """Bật/Tắt auto upload chạy nền (tiếp tục khi tắt tool)"""
+        if self.is_background_running():
+            print("\n🔴 DỪNG AUTO UPLOAD NỀN")
             print("=" * 60)
-            self.auto_upload_running = False
-            if self.auto_upload_thread:
-                print("⏳ Đang dừng thread...")
-                self.auto_upload_thread.join(timeout=3)
-            print("✅ Đã dừng auto upload!")
+            self.stop_background_mode()
             input("\n✅ Nhấn Enter để quay lại...")
         else:
-            # Chưa chạy -> Bật lên
-            if not self.auto_upload_interval or not self.auto_upload_prefix:
-                print("\n⚠️  Chưa có cấu hình auto upload!")
-                print("💡 Vui lòng chạy Menu 7 để cấu hình trước")
-                input("\n✅ Nhấn Enter để quay lại...")
-                return
-            
-            if not self.repo_path or not self.repo_url:
-                print("\n⚠️  Chưa có cấu hình repository!")
-                print("💡 Vui lòng chạy Menu 1 để cấu hình trước")
-                input("\n✅ Nhấn Enter để quay lại...")
-                return
-            
-            print("\n🟢 BẬT AUTO UPLOAD")
+            print("\n🟢 BẬT AUTO UPLOAD NỀN")
             print("=" * 60)
-            print(f"⏰ Upload mỗi {self.auto_upload_interval} phút")
-            print(f"💬 Message: {self.auto_upload_prefix}")
-            print(f"📁 Thư mục: {self.repo_path}")
+            bg_cfg = self._read_bg_config()
+            interval_show = (bg_cfg.get('interval') if bg_cfg and bg_cfg.get('interval') else self.auto_upload_interval) or '?'
+            prefix_show = (bg_cfg.get('prefix') if bg_cfg and bg_cfg.get('prefix') else self.auto_upload_prefix) or '?'
+            path_show = (bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else self.repo_path) or '?'
+            print(f"⏰ Upload mỗi {interval_show} phút")
+            print(f"💬 Message: {prefix_show}")
+            print(f"📁 Thư mục: {path_show}")
             print("=" * 60)
-            
-            self.auto_upload_running = True
-            self.auto_upload_thread = threading.Thread(
-                target=self.auto_upload_worker,
-                args=(self.auto_upload_interval, self.auto_upload_prefix),
-                daemon=True
-            )
-            self.auto_upload_thread.start()
-            
-            time.sleep(2)
-            input("\n✅ Nhấn Enter để quay lại menu (auto upload chạy nền)...")
+            ok = self.start_background_mode()
+            if ok:
+                time.sleep(1)
+            input("\n✅ Nhấn Enter để quay lại menu...")
     
     def view_logs(self):
         """Xem logs"""
@@ -986,6 +1132,63 @@ class GitHubUploader:
         print("=" * 60)
         return True
     
+    # =========================
+    # Background entrypoint
+    # =========================
+    def run_background_loop(self):
+        """Chạy vòng lặp auto upload ở chế độ nền (không cần mở tool)"""
+        try:
+            # Đọc cấu hình nền
+            if not os.path.exists(self.bg_config_file):
+                print("❌ Không tìm thấy cấu hình nền, thoát!")
+                return 1
+            with open(self.bg_config_file, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            self.repo_path = cfg.get('path')
+            self.repo_url = cfg.get('url')
+            self.branch = cfg.get('branch', 'main')
+            self.auto_upload_interval = int(cfg.get('interval'))
+            self.auto_upload_prefix = cfg.get('prefix') or 'Auto update'
+
+            # Đảm bảo repo hợp lệ và remote
+            if not self.init_git_repo() or not self.configure_remote():
+                return 2
+
+            # Vòng lặp vô hạn, dừng bằng cách kill tiến trình từ ngoài
+            interval_minutes = self.auto_upload_interval
+            commit_prefix = self.auto_upload_prefix
+            upload_count = 0
+            self.logger.info(f"Background loop bắt đầu - mỗi {interval_minutes} phút")
+            while True:
+                try:
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    commit_msg = f"{commit_prefix} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                    success, stdout, _ = self.run_command(
+                        f'cd "{self.repo_path}" && git status --short',
+                        check=False
+                    )
+                    if stdout.strip():
+                        upload_count += 1
+                        self.logger.info(f"[BG] Thay đổi phát hiện, upload #{upload_count}")
+                        self.run_command(f'cd "{self.repo_path}" && git add .', check=False)
+                        self.run_command(f'cd "{self.repo_path}" && git commit -m "{commit_msg}"', check=False)
+                        ok, _, errp = self.run_command(
+                            f'cd "{self.repo_path}" && git push -u origin {self.branch}',
+                            check=False
+                        )
+                        if ok:
+                            self.logger.info(f"[BG] Upload #{upload_count} thành công ({timestamp})")
+                        else:
+                            self.logger.error(f"[BG] Upload #{upload_count} thất bại: {errp}")
+                    time.sleep(interval_minutes * 60)
+                except Exception as loop_e:
+                    self.logger.exception(f"[BG] Lỗi vòng lặp: {loop_e}")
+                    time.sleep(60)
+        except Exception as e:
+            self.logger.exception(f"[BG] Lỗi khởi động: {e}")
+            return 1
+        return 0
+    
     def run(self):
         """Chạy chương trình chính"""
         while True:
@@ -1050,6 +1253,9 @@ class GitHubUploader:
 def main():
     try:
         uploader = GitHubUploader()
+        # CLI flags đơn giản
+        if '--run-background' in sys.argv:
+            sys.exit(uploader.run_background_loop())
         uploader.run()
     except KeyboardInterrupt:
         print("\n\n⚠️  Đã dừng chương trình!")
