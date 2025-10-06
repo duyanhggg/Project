@@ -713,6 +713,9 @@ class GitHubUploader:
         self.clear_screen()
         self.print_banner()
         
+        if not isinstance(self.config, dict):
+            self.config = {}
+        
         if not self.config:
             print("\n📭 Chưa có cấu hình nào được lưu")
             input("\n✅ Nhấn Enter để quay lại...")
@@ -720,7 +723,10 @@ class GitHubUploader:
         
         print("\n💾 CÁC CẤU HÌNH ĐÃ LƯU:\n")
         
-        configs = list(self.config.items())
+        try:
+            configs = [(name, cfg) for name, cfg in self.config.items() if isinstance(cfg, dict)]
+        except Exception:
+            configs = []
         for i, (name, cfg) in enumerate(configs, 1):
             print(f"{i}. 📦 {name}")
             print(f"   📁 Thư mục: {cfg.get('path', 'N/A')}")
@@ -740,9 +746,24 @@ class GitHubUploader:
                 idx = int(idx) - 1
                 if 0 <= idx < len(configs):
                     name, cfg = configs[idx]
-                    self.repo_path = cfg.get('path')
-                    self.repo_url = cfg.get('url')
-                    self.branch = cfg.get('branch', 'main')
+                    if not isinstance(cfg, dict):
+                        print("❌ Cấu hình không hợp lệ!")
+                        input("\n✅ Nhấn Enter để quay lại...")
+                        return
+                    path = (cfg.get('path') or '').strip()
+                    url = (cfg.get('url') or '').strip()
+                    branch = (cfg.get('branch') or 'main').strip() or 'main'
+                    if not path or not os.path.exists(path):
+                        print("❌ Thư mục trong cấu hình không tồn tại hoặc trống!")
+                        input("\n✅ Nhấn Enter để quay lại...")
+                        return
+                    if not url:
+                        print("❌ URL repository trong cấu hình trống!")
+                        input("\n✅ Nhấn Enter để quay lại...")
+                        return
+                    self.repo_path = path
+                    self.repo_url = url
+                    self.branch = branch
                     print(f"✅ Đã load cấu hình '{name}'")
                     input("\n✅ Nhấn Enter để tiếp tục...")
             except:
