@@ -27,9 +27,12 @@ class GitHubUploader:
         self.auto_upload_thread = None
         self.auto_upload_interval = None
         self.auto_upload_prefix = None
+        # Language
+        self.lang = self.config.get('lang', 'vi')
         # Background mode artifacts
         self.bg_pid_file = os.path.join(Path.home(), ".github_uploader_bg.json")
         self.bg_config_file = os.path.join(Path.home(), ".github_uploader_bg_config.json")
+        self.bg_status_file = os.path.join(Path.home(), ".github_uploader_bg_status.json")
         # Notifications
         self.notifier = None
         try:
@@ -103,8 +106,77 @@ class GitHubUploader:
         """In banner chào mừng"""
         print("=" * 60)
         print("       🚀 GITHUB AUTO UPLOAD TOOL PRO 🚀")
-        print("    Tự động đẩy code lên GitHub với nhiều tính năng")
+        subtitle = self.t('subtitle', 'Tự động đẩy code lên GitHub với nhiều tính năng')
+        print(f"    {subtitle}")
         print("=" * 60)
+
+    def t(self, key, default_text=""):
+        """Simple i18n helper"""
+        translations = {
+            'en': {
+                'subtitle': 'Automate pushing code to GitHub with advanced features',
+                'menu_title': 'MAIN MENU:',
+                'menu_upload': 'Upload code to GitHub',
+                'menu_status': 'View Git status',
+                'menu_gitignore': 'Create/Edit .gitignore',
+                'menu_auth_help': 'GitHub authentication guide',
+                'menu_saved_cfg': 'Manage saved configurations',
+                'menu_guide': 'Install & usage guide',
+                'menu_auto_cfg': 'Configure auto upload',
+                'menu_auto_toggle_on': 'Start auto upload (background, keeps running when tool closed)',
+                'menu_auto_toggle_off': 'Stop background auto upload',
+                'menu_logs': 'View logs',
+                'menu_exit': 'Exit',
+                'prompt_choice': 'Choose (0-9): ',
+                'status_bg_on': 'BACKGROUND AUTO UPLOAD: RUNNING',
+                'status_bg_off': 'BACKGROUND AUTO UPLOAD: OFF',
+            },
+            'vi': {
+                'subtitle': 'Tự động đẩy code lên GitHub với nhiều tính năng',
+                'menu_title': 'MENU CHÍNH:',
+                'menu_upload': 'Upload code lên GitHub',
+                'menu_status': 'Xem trạng thái Git',
+                'menu_gitignore': 'Tạo/Sửa .gitignore',
+                'menu_auth_help': 'Hướng dẫn xác thực GitHub',
+                'menu_saved_cfg': 'Quản lý cấu hình đã lưu',
+                'menu_guide': 'Hướng dẫn cài đặt & sử dụng',
+                'menu_auto_cfg': 'Cấu hình tự động upload',
+                'menu_auto_toggle_on': 'Bật auto upload (chạy nền, vẫn chạy khi tắt tool)',
+                'menu_auto_toggle_off': 'Dừng auto upload chạy nền',
+                'menu_logs': 'Xem logs',
+                'menu_exit': 'Thoát',
+                'prompt_choice': 'Chọn chức năng (0-9): ',
+                'status_bg_on': 'TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY',
+                'status_bg_off': 'TỰ ĐỘNG UPLOAD NỀN: TẮT',
+            }
+        }
+        lang_map = translations.get(self.lang, {})
+        return lang_map.get(key, default_text)
+
+    def select_language(self):
+        """Prompt user to choose language at startup"""
+        self.clear_screen()
+        print("=" * 60)
+        print("🌐 Chọn ngôn ngữ / Choose language")
+        print("=" * 60)
+        current = 'Tiếng Việt' if self.lang == 'vi' else 'English'
+        print(f"1. Tiếng Việt (hiện tại: {current})")
+        print("2. English")
+        print("0. Giữ nguyên / Keep current")
+        choice = input("\n➤ Lựa chọn: ").strip()
+        if choice == '1':
+            self.lang = 'vi'
+        elif choice == '2':
+            self.lang = 'en'
+        else:
+            # keep current
+            pass
+        # persist
+        try:
+            self.config['lang'] = self.lang
+            self.save_config()
+        except Exception:
+            pass
     
     def run_command(self, command, check=True):
         """Chạy lệnh shell và trả về kết quả"""
@@ -181,6 +253,29 @@ class GitHubUploader:
         except Exception:
             return None
         return None
+
+    def _read_bg_status(self):
+        try:
+            if os.path.exists(self.bg_status_file):
+                with open(self.bg_status_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            return None
+        return None
+
+    def _write_bg_status(self, result, message='', count=None):
+        try:
+            payload = {
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'result': result,  # success | failure | nochange | start | stop
+                'message': message,
+            }
+            if count is not None:
+                payload['upload_count'] = count
+            with open(self.bg_status_file, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def _is_process_running(self, pid):
         if not pid or pid <= 0:
@@ -487,46 +582,45 @@ class GitHubUploader:
         self.clear_screen()
         self.print_banner()
         
-        # Hiển thị trạng thái auto upload (nền)
+        # Hiển thị trạng thái auto upload (nền) - dòng ngắn gọn, có thông tin lần chạy cuối
         bg_cfg = self._read_bg_config()
+        bg_stat = self._read_bg_status()
         if self.is_background_running():
-            interval_txt = f"mỗi {bg_cfg.get('interval')} phút" if bg_cfg and bg_cfg.get('interval') else "đang chạy"
+            interval_txt = f"{bg_cfg.get('interval')}m" if bg_cfg and bg_cfg.get('interval') else "?m"
             prefix_txt = bg_cfg.get('prefix') if bg_cfg and bg_cfg.get('prefix') else (self.auto_upload_prefix or '')
             path_txt = bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else (self.repo_path or '')
-            details = []
-            if interval_txt:
-                details.append(interval_txt)
-            if prefix_txt:
-                details.append(f"msg: {prefix_txt}")
-            if path_txt:
-                details.append(f"dir: {path_txt}")
-            print(f"\n🟢 TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY ({'; '.join(details)})")
+            branch_txt = (bg_cfg.get('branch') if bg_cfg and bg_cfg.get('branch') else self.branch) or ''
+            last_txt = ''
+            if bg_stat and bg_stat.get('timestamp'):
+                res = bg_stat.get('result') or ''
+                res_icon = '✅' if res == 'success' else ('⚠️' if res == 'failure' else '⏳' if res == 'start' else '➖')
+                last_txt = f" | last {bg_stat.get('timestamp')} {res_icon}"
+            print(f"\n🟢 {self.t('status_bg_on', 'TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY')} ({interval_txt} | msg: {prefix_txt} | dir: {path_txt} | br: {branch_txt}){last_txt}")
         else:
             if bg_cfg:
-                details = []
-                if bg_cfg.get('interval'):
-                    details.append(f"mỗi {bg_cfg.get('interval')} phút")
-                if bg_cfg.get('prefix'):
-                    details.append(f"msg: {bg_cfg.get('prefix')}")
-                if bg_cfg.get('path'):
-                    details.append(f"dir: {bg_cfg.get('path')}")
-                suffix = f" (cấu hình sẵn: {'; '.join(details)})" if details else ""
-                print(f"\n⚪ TỰ ĐỘNG UPLOAD NỀN: TẮT{suffix}")
+                interval_txt = f"{bg_cfg.get('interval')}m" if bg_cfg.get('interval') else ""
+                prefix_txt = bg_cfg.get('prefix') or ''
+                path_txt = bg_cfg.get('path') or ''
+                branch_txt = bg_cfg.get('branch') or ''
+                details = "; ".join([s for s in [interval_txt, f"msg: {prefix_txt}" if prefix_txt else '', f"dir: {path_txt}" if path_txt else '', f"br: {branch_txt}" if branch_txt else ''] if s])
+                suffix = f" (cấu hình sẵn: {details})" if details else ""
+                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: TẮT')}{suffix}")
             else:
-                print("\n⚪ TỰ ĐỘNG UPLOAD NỀN: TẮT")
+                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: TẮT')}")
         
-        print("\n📋 MENU CHÍNH:")
-        print("1. 🚀 Upload code lên GitHub")
-        print("2. 📊 Xem trạng thái Git")
-        print("3. 📝 Tạo/Sửa .gitignore")
-        print("4. 🔐 Hướng dẫn xác thực GitHub")
-        print("5. 💾 Quản lý cấu hình đã lưu")
-        print("6. 📚 Hướng dẫn cài đặt & sử dụng")
-        print("7. ⏰ Cấu hình tự động upload")
+        print(f"\n📋 {self.t('menu_title', 'MENU CHÍNH:')}")
+        print(f"1. 🚀 {self.t('menu_upload', 'Upload code lên GitHub')}")
+        print(f"2. 📊 {self.t('menu_status', 'Xem trạng thái Git')}")
+        print(f"3. 📝 {self.t('menu_gitignore', 'Tạo/Sửa .gitignore')}")
+        print(f"4. 🔐 {self.t('menu_auth_help', 'Hướng dẫn xác thực GitHub')}")
+        print(f"5. 💾 {self.t('menu_saved_cfg', 'Quản lý cấu hình đã lưu')}")
+        print(f"6. 📚 {self.t('menu_guide', 'Hướng dẫn cài đặt & sử dụng')}")
+        print(f"7. ⏰ {self.t('menu_auto_cfg', 'Cấu hình tự động upload')}")
         
         if self.is_background_running():
             pid = self._read_bg_pid()
-            label = f"8. 🔴 Dừng auto upload chạy nền (PID {pid})" if pid else "8. 🔴 Dừng auto upload chạy nền"
+            base = self.t('menu_auto_toggle_off', 'Dừng auto upload chạy nền')
+            label = f"8. 🔴 {base} (PID {pid})" if pid else f"8. 🔴 {base}"
             print(label)
         else:
             interval_txt = None
@@ -536,12 +630,12 @@ class GitHubUploader:
             elif self.auto_upload_interval:
                 interval_txt = f"mỗi {self.auto_upload_interval} phút"
             suffix = f" - {interval_txt}" if interval_txt else ""
-            print(f"8. 🟢 Bật auto upload (chạy nền, vẫn chạy khi tắt tool){suffix}")
+            print(f"8. 🟢 {self.t('menu_auto_toggle_on', 'Bật auto upload (chạy nền, vẫn chạy khi tắt tool)')}{suffix}")
         
-        print("9. 📄 Xem logs")
-        print("0. 👋 Thoát")
+        print(f"9. 📄 {self.t('menu_logs', 'Xem logs')}")
+        print(f"0. 👋 {self.t('menu_exit', 'Thoát')}")
         
-        return input("\n➤ Chọn chức năng (0-9): ").strip()
+        return input(f"\n➤ {self.t('prompt_choice', 'Chọn chức năng (0-9): ')}").strip()
     
     def show_simple_guide(self):
         """Hiển thị hướng dẫn đơn giản"""
@@ -692,12 +786,15 @@ class GitHubUploader:
                         self.logger.info(f"Upload #{upload_count} thành công!")
                         print(f"\n✅ [{timestamp}] Auto upload #{upload_count} thành công!")
                         self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
+                        self._write_bg_status('success', f'#{upload_count}', upload_count)
                     else:
                         self.logger.error(f"Upload #{upload_count} thất bại: {stderr_push}")
                         print(f"\n⚠️  [{timestamp}] Auto upload #{upload_count} thất bại")
                         self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
+                        self._write_bg_status('failure', f'#{upload_count}', upload_count)
                 else:
                     self.logger.debug("Không có thay đổi, bỏ qua")
+                    self._write_bg_status('nochange')
                 
                 # Đợi đến lần upload tiếp theo
                 self.logger.debug(f"Đợi {interval_minutes} phút đến lần upload tiếp theo")
@@ -1179,6 +1276,7 @@ class GitHubUploader:
             commit_prefix = self.auto_upload_prefix
             upload_count = 0
             self.logger.info(f"Background loop bắt đầu - mỗi {interval_minutes} phút")
+            self._write_bg_status('start')
             while True:
                 try:
                     timestamp = datetime.now().strftime('%H:%M:%S')
@@ -1199,12 +1297,15 @@ class GitHubUploader:
                         if ok:
                             self.logger.info(f"[BG] Upload #{upload_count} thành công ({timestamp})")
                             self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
+                            self._write_bg_status('success', f'#{upload_count}', upload_count)
                         else:
                             self.logger.error(f"[BG] Upload #{upload_count} thất bại: {errp}")
                             self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
+                            self._write_bg_status('failure', f'#{upload_count}', upload_count)
                     time.sleep(interval_minutes * 60)
                 except Exception as loop_e:
                     self.logger.exception(f"[BG] Lỗi vòng lặp: {loop_e}")
+                    self._write_bg_status('failure', str(loop_e))
                     time.sleep(60)
         except Exception as e:
             self.logger.exception(f"[BG] Lỗi khởi động: {e}")
@@ -1278,6 +1379,8 @@ def main():
         # CLI flags đơn giản
         if '--run-background' in sys.argv:
             sys.exit(uploader.run_background_loop())
+        # Language selection on startup
+        uploader.select_language()
         uploader.run()
     except KeyboardInterrupt:
         print("\n\n⚠️  Đã dừng chương trình!")
