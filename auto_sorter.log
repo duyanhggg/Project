@@ -1,0 +1,100 @@
+27/09/2025 20:09:47 - INFO - B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:17:15] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:20:03] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:39:19] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:39:28] [INFO] Thoát ch\u01b0\u01a1ng trình t\u1eeb tray icon.
+[27/09/2025 20:40:44] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:40:47] [INFO] \u0110ã t\u1eaft t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file.
+[27/09/2025 20:40:48] [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        uMsg, lambda w, l: 0)(wParam, lParam) or 0)
+        ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+    ~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ~~~~~~~~~~~~^^^^^^^^^^^^
+  File "E:\Code\file.py", line 97, in on_toggle
+    observer.start()
+    ~~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\observers\api.py", line 268, in start
+    super().start()
+    ~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\utils\__init__.py", line 76, in start
+    threading.Thread.start(self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 969, in start
+    raise RuntimeError("threads can only be started once")
+RuntimeError: threads can only be started once
+[27/09/2025 20:40:54] [INFO] Thoát ch\u01b0\u01a1ng trình t\u1eeb tray icon.
+[27/09/2025 20:41:48] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:41:49] [INFO] \u0110ã t\u1eaft t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file.
+[27/09/2025 20:41:49] [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        uMsg, lambda w, l: 0)(wParam, lParam) or 0)
+        ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+    ~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ~~~~~~~~~~~~^^^^^^^^^^^^
+  File "E:\Code\file.py", line 125, in on_toggle
+    observer.start()
+    ~~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\observers\api.py", line 268, in start
+    super().start()
+    ~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\utils\__init__.py", line 76, in start
+    threading.Thread.start(self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 969, in start
+    raise RuntimeError("threads can only be started once")
+RuntimeError: threads can only be started once
+[27/09/2025 20:41:52] [INFO] \u0110ã t\u1eaft t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file.
+[27/09/2025 20:41:52] [ERROR] An error occurred when calling message handler
+Traceback (most recent call last):
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 412, in _dispatcher
+    return int(icon._message_handlers.get(
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        uMsg, lambda w, l: 0)(wParam, lParam) or 0)
+        ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_win32.py", line 224, in _on_notify
+    descriptors[index - 1](self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 328, in inner
+    callback(self)
+    ~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\pystray\_base.py", line 453, in __call__
+    return self._action(icon, self)
+           ~~~~~~~~~~~~^^^^^^^^^^^^
+  File "E:\Code\file.py", line 125, in on_toggle
+    observer.start()
+    ~~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\observers\api.py", line 268, in start
+    super().start()
+    ~~~~~~~~~~~~~^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\site-packages\watchdog\utils\__init__.py", line 76, in start
+    threading.Thread.start(self)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "c:\Users\Administrator\AppData\Local\Programs\Python\Python313\Lib\threading.py", line 969, in start
+    raise RuntimeError("threads can only be started once")
+RuntimeError: threads can only be started once
+[27/09/2025 20:41:54] [INFO] Thoát ch\u01b0\u01a1ng trình t\u1eeb tray icon.
+[27/09/2025 20:53:15] [INFO] B\u1eaft \u0111\u1ea7u theo dõi th\u01b0 m\u1ee5c \u0111\u1ec3 t\u1ef1 \u0111\u1ed9ng s\u1eafp x\u1ebfp file m\u1edbi...
+[27/09/2025 20:53:50] [INFO] Phát hi\u1ec7n file m\u1edbi: 1.png
+[27/09/2025 20:53:50] [INFO] File '1.png' \u0111ã \u0111\u01b0\u1ee3c chuy\u1ec3n vào 'Images'
+[27/09/2025 20:54:03] [INFO] Thoát ch\u01b0\u01a1ng trình t\u1eeb tray icon.
