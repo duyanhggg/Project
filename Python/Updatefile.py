@@ -244,6 +244,32 @@ class GitHubUploader:
         except Exception:
             pass
 
+    def _parse_changed_files(self, status_output):
+        """Trích xuất danh sách file thay đổi từ git status --short"""
+        try:
+            files = []
+            for line in (status_output or '').splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if not parts:
+                    continue
+                # format can be: 'XY path' or 'R  old -> new'
+                if '->' in line:
+                    # take new path after '->'
+                    try:
+                        arrow_idx = parts.index('->')
+                        path = parts[arrow_idx + 1]
+                    except Exception:
+                        path = parts[-1]
+                else:
+                    path = parts[-1]
+                files.append(path)
+            return len(files), files
+        except Exception:
+            return 0, []
+
     # =========================
     # Background mode utilities
     # =========================
@@ -831,12 +857,20 @@ class GitHubUploader:
                     if success:
                         self.logger.info(f"Upload #{upload_count} thành công!")
                         print(f"\n✅ [{timestamp}] Auto upload #{upload_count} thành công!")
-                        self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
+                        changed_count, changed_files = self._parse_changed_files(stdout)
+                        file_list = ", ".join(changed_files[:5])
+                        more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
+                        msg = f"Pushed {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Pushed to {self.branch}"
+                        self.notify("GitHub Auto Upload", msg)
                         self._write_bg_status('success', f'#{upload_count}', upload_count)
                     else:
                         self.logger.error(f"Upload #{upload_count} thất bại: {stderr_push}")
                         print(f"\n⚠️  [{timestamp}] Auto upload #{upload_count} thất bại")
-                        self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
+                        changed_count, changed_files = self._parse_changed_files(stdout)
+                        file_list = ", ".join(changed_files[:5])
+                        more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
+                        msg = f"Failed to push {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Push failed to {self.branch}"
+                        self.notify("GitHub Auto Upload", msg, duration=7)
                         self._write_bg_status('failure', f'#{upload_count}', upload_count)
                 else:
                     self.logger.debug("Không có thay đổi, bỏ qua")
@@ -1341,11 +1375,19 @@ class GitHubUploader:
                         )
                         if ok:
                             self.logger.info(f"[BG] Upload #{upload_count} thành công ({timestamp})")
-                            self.notify("GitHub Auto Upload", f"Upload #{upload_count} thành công")
+                            changed_count, changed_files = self._parse_changed_files(stdout)
+                            file_list = ", ".join(changed_files[:5])
+                            more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
+                            msg = f"Pushed {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Pushed to {self.branch}"
+                            self.notify("GitHub Auto Upload", msg)
                             self._write_bg_status('success', f'#{upload_count}', upload_count)
                         else:
                             self.logger.error(f"[BG] Upload #{upload_count} thất bại: {errp}")
-                            self.notify("GitHub Auto Upload", f"Upload #{upload_count} thất bại", duration=7)
+                            changed_count, changed_files = self._parse_changed_files(stdout)
+                            file_list = ", ".join(changed_files[:5])
+                            more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
+                            msg = f"Failed to push {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Push failed to {self.branch}"
+                            self.notify("GitHub Auto Upload", msg, duration=7)
                             self._write_bg_status('failure', f'#{upload_count}', upload_count)
                     time.sleep(interval_minutes * 60)
                 except Exception as loop_e:
