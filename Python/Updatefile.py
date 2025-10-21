@@ -655,9 +655,9 @@ class GitHubUploader:
                 branch_txt = bg_cfg.get('branch') or ''
                 details = "; ".join([s for s in [interval_txt, f"msg: {prefix_txt}" if prefix_txt else '', f"dir: {path_txt}" if path_txt else '', f"br: {branch_txt}" if branch_txt else ''] if s])
                 suffix = f" (cấu hình sẵn: {details})" if details else ""
-                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: TẮT')}{suffix}")
+                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}{suffix}")
             else:
-                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: TẮT')}")
+                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}")
         
         print(f"\n📋 {self.t('menu_title', 'MENU CHÍNH:')}")
         print(f"1. 🚀 {self.t('menu_upload', 'Upload code lên GitHub')}")
