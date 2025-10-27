@@ -15,6 +15,19 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from infi.systray import SysTrayIcon
+import io
+
+def _force_utf8_stdout():
+    try:
+        if hasattr(sys.stdout, "detach"):
+            sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8', errors='replace')
+        if hasattr(sys.stderr, "detach"):
+            sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8', errors='replace')
+    except Exception:
+        # Nếu không thể chuyển, giữ nguyên, tránh crash
+        pass
+
+_force_utf8_stdout()
 
 # Note: UTF-8 encoding is handled by the file header and Python's default encoding
 
@@ -1357,7 +1370,10 @@ class GitHubUploader:
             self.repo_path = cfg.get('path')
             self.repo_url = cfg.get('url')
             self.branch = cfg.get('branch', 'main')
-            self.auto_upload_interval = int(cfg.get('interval'))
+            try:
+                self.auto_upload_interval = int(cfg.get('interval'))
+            except Exception:
+                self.auto_upload_interval = 5
             self.auto_upload_prefix = cfg.get('prefix') or 'Auto update'
 
             # Đảm bảo repo hợp lệ và remote
@@ -1412,7 +1428,10 @@ class GitHubUploader:
                             changed_count, changed_files = self._parse_changed_files(stdout)
                             file_list = ", ".join(changed_files[:5])
                             more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
-                            msg = f"Pushed {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Pushed to {self.branch}"
+                            if changed_count:
+                                msg = f"Pushed {changed_count} file(s) to {self.branch}\n{file_list}{more}"
+                            else:
+                                msg = f"Pushed to {self.branch}"
                             self.notify("GitHub Auto Upload", msg)
                             self._write_bg_status('success', f'#{upload_count}', upload_count)
                         else:
@@ -1420,138 +1439,37 @@ class GitHubUploader:
                             changed_count, changed_files = self._parse_changed_files(stdout)
                             file_list = ", ".join(changed_files[:5])
                             more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
-                            msg = f"Failed to push {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Push failed to {self.branch}"
+                            if changed_count:
+                                msg = f"Failed to push {changed_count} file(s) to {self.branch}\n{file_list}{more}"
+                            else:
+                                msg = f"Push failed to {self.branch}"
                             self.notify("GitHub Auto Upload", msg, duration=7)
                             self._write_bg_status('failure', f'#{upload_count}', upload_count)
-                    # sleep but wake early if stop requested
+                    else:
+                        self.logger.debug("[BG] Không có thay đổi, bỏ qua")
+                        self._write_bg_status('nochange')
+
+                    # Đợi đến lần upload tiếp theo (ngắt nhanh nếu stop event set)
                     slept = 0
-                    total = interval_minutes * 60
-                    while slept < total:
-                        if self._bg_stop_event and self._bg_stop_event.is_set():
-                            break
+                    wait_seconds = interval_minutes * 60
+                    while slept < wait_seconds and not (self._bg_stop_event and self._bg_stop_event.is_set()):
                         time.sleep(1)
                         slept += 1
-                    if self._bg_stop_event and self._bg_stop_event.is_set():
-                        break
-                except Exception as loop_e:
-                    self.logger.exception(f"[BG] Lỗi vòng lặp: {loop_e}")
-                    self._write_bg_status('failure', str(loop_e))
+
+                except Exception as e:
+                    self.logger.exception(f"Lỗi trong background iteration: {e}")
+                    # ghi trạng thái lỗi tạm thời
+                    self._write_bg_status('failure', str(e))
+                    # chờ trước khi thử lại
                     time.sleep(60)
+
+            self.logger.info(f"Background loop dừng - Tổng số lần upload: {upload_count}")
+            return 0
+
         except Exception as e:
-            self.logger.exception(f"[BG] Lỗi khởi động: {e}")
-            return 1
-        finally:
+            # Lỗi khởi tạo vòng lặp background
             try:
-                if systray:
-                    systray.shutdown()
+                self.logger.exception(f"Background loop failed to start: {e}")
             except Exception:
-                pass
-        return 0
-
-    def _open_gui_from_tray(self):
-        try:
-            pythonw = sys.executable
-            if pythonw.lower().endswith('python.exe'):
-                maybe = pythonw[:-10] + 'pythonw.exe'
-                if os.path.exists(maybe):
-                    pythonw = maybe
-            script = os.path.abspath(os.path.join(os.path.dirname(__file__), 'run_update_gui.pyw'))
-            subprocess.Popen([pythonw, script], close_fds=True)
-        except Exception:
-            self.logger.exception('Failed to open GUI from tray')
-
-    def _stop_from_tray(self, systray=None):
-        try:
-            if hasattr(self, '_bg_stop_event') and self._bg_stop_event:
-                self._bg_stop_event.set()
-            self._write_bg_status('stopped')
-            self.logger.info('Background stop requested from tray')
-            if systray:
-                try:
-                    systray.shutdown()
-                except Exception:
-                    pass
-        except Exception:
-            self.logger.exception('Error while stopping from tray')
-    
-    def run(self):
-        """Chạy chương trình chính"""
-        while True:
-            choice = self.show_menu()
-            
-            if choice == "1":
-                self.auto_upload()
-                input("\n[OK] Nhấn Enter để quay lại menu...")
-            
-            elif choice == "2":
-                self.clear_screen()
-                self.print_banner()
-                if not self.repo_path:
-                    self.repo_path = safe_input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
-                self.show_git_status()
-                input("\n[OK] Nhấn Enter để quay lại menu...")
-            
-            elif choice == "3":
-                self.clear_screen()
-                self.print_banner()
-                if not self.repo_path:
-                    self.repo_path = safe_input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
-                self.create_gitignore()
-                input("\n[OK] Nhấn Enter để quay lại menu...")
-            
-            elif choice == "4":
-                self.show_simple_guide()
-            
-            elif choice == "5":
-                self.manage_saved_configs()
-            
-            elif choice == "6":
-                self.show_simple_guide()
-            
-            elif choice == "7":
-                self.start_auto_upload()
-            
-            elif choice == "8":
-                self.toggle_auto_upload()
-            
-            elif choice == "9":
-                self.view_logs()
-            
-            elif choice == "0":
-                # Dừng auto upload nếu đang chạy
-                if self.auto_upload_running:
-                    self.logger.info("Đang dừng auto upload...")
-                    print("\n[WARNING]  Đang dừng tự động upload...")
-                    self.auto_upload_running = False
-                    if self.auto_upload_thread:
-                        self.auto_upload_thread.join(timeout=5)
-                
-                self.logger.info("Tool đã đóng")
-                self.logger.info("=" * 60)
-                print("\n[EXIT] Cảm ơn bạn đã sử dụng! Tạm biệt!")
-                break
-            
-            else:
-                print("[ERROR] Lựa chọn không hợp lệ!")
-                input("\n[OK] Nhấn Enter để thử lại...")
-
-def main():
-    try:
-        uploader = GitHubUploader()
-        # CLI flags đơn giản
-        if '--run-background' in sys.argv:
-            sys.exit(uploader.run_background_loop())
-        # Language selection on startup
-        uploader.select_language()
-        uploader.run()
-    except KeyboardInterrupt:
-        print("\n\n[WARNING]  Đã dừng chương trình!")
-        sys.exit(0)
-    except Exception as e:
-        print(f"\n[ERROR] Lỗi không mong muốn: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+                print(f"[ERROR] Background loop failed to start: {e}")
+            return 2
