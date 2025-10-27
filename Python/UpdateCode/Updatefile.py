@@ -19,15 +19,14 @@ from infi.systray import SysTrayIcon
 # Note: UTF-8 encoding is handled by the file header and Python's default encoding
 
 def safe_input(prompt=""):
-    """Safe input function that handles cases where stdin is not available"""
     try:
         if hasattr(sys, "stdin") and sys.stdin and sys.stdin.isatty():
             return input(prompt)
         else:
-            # stdin không khả dụng (chạy nền, service, GUI, ...), trả về chuỗi rỗng
+            print("[WARNING] Không thể nhập dữ liệu (stdin không khả dụng).")
             return ""
     except (EOFError, OSError, AttributeError):
-        # If stdin is not available (e.g., in GUI mode), return empty string
+        print("[WARNING] Không thể nhập dữ liệu (stdin không khả dụng).")
         return ""
 
 class GitHubUploader:
