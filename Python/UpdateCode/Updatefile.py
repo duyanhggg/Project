@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -22,7 +21,11 @@ from infi.systray import SysTrayIcon
 def safe_input(prompt=""):
     """Safe input function that handles cases where stdin is not available"""
     try:
-        return input(prompt)
+        if hasattr(sys, "stdin") and sys.stdin and sys.stdin.isatty():
+            return input(prompt)
+        else:
+            # stdin không khả dụng (chạy nền, service, GUI, ...), trả về chuỗi rỗng
+            return ""
     except (EOFError, OSError, AttributeError):
         # If stdin is not available (e.g., in GUI mode), return empty string
         return ""
