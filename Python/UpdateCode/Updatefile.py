@@ -17,6 +17,16 @@ from datetime import datetime
 from pathlib import Path
 from infi.systray import SysTrayIcon
 
+# Note: UTF-8 encoding is handled by the file header and Python's default encoding
+
+def safe_input(prompt=""):
+    """Safe input function that handles cases where stdin is not available"""
+    try:
+        return input(prompt)
+    except (EOFError, OSError, AttributeError):
+        # If stdin is not available (e.g., in GUI mode), return empty string
+        return ""
+
 class GitHubUploader:
     def __init__(self):
         self.repo_path = None
@@ -132,7 +142,7 @@ class GitHubUploader:
     def print_banner(self):
         """In banner chào mừng"""
         print("=" * 60)
-        print("       🚀 GITHUB AUTO UPLOAD TOOL PRO 🚀")
+        print("       [UPLOAD] GITHUB AUTO UPLOAD TOOL PRO [UPLOAD]")
         subtitle = self.t('subtitle', 'Tự động đẩy code lên GitHub với nhiều tính năng')
         print(f"    {subtitle}")
         print("=" * 60)
@@ -184,13 +194,13 @@ class GitHubUploader:
         """Prompt user to choose language at startup"""
         self.clear_screen()
         print("=" * 60)
-        print("🌐 Chọn ngôn ngữ / Choose language")
+        print("[LANG] Chọn ngôn ngữ / Choose language")
         print("=" * 60)
         current = 'Tiếng Việt' if self.lang == 'vi' else 'English'
         print(f"1. Tiếng Việt (hiện tại: {current})")
         print("2. English")
         print("0. Giữ nguyên / Keep current")
-        choice = input("\n➤ Lựa chọn: ").strip()
+        choice = safe_input("\n-> Lựa chọn: ").strip()
         if choice == '1':
             self.lang = 'vi'
         elif choice == '2':
@@ -214,7 +224,8 @@ class GitHubUploader:
                 check=check,
                 capture_output=True,
                 text=True,
-                encoding='utf-8'
+                encoding='utf-8',
+                errors='replace'  # Replace invalid characters instead of failing
             )
             return result.returncode == 0, result.stdout, result.stderr
         except subprocess.CalledProcessError as e:
@@ -226,14 +237,14 @@ class GitHubUploader:
         success, stdout, _ = self.run_command("git --version", check=False)
         if not success:
             self.logger.error("Git chưa được cài đặt!")
-            print("❌ Git chưa được cài đặt!")
-            print("\n📥 HƯỚNG DẪN CÀI ĐẶT GIT:")
-            print("   🪟 Windows: https://git-scm.com/download/win")
-            print("   🍎 Mac: brew install git")
-            print("   🐧 Linux: sudo apt install git")
+            print("[ERROR] Git chưa được cài đặt!")
+            print("\n[DOWNLOAD] HƯỚNG DẪN CÀI ĐẶT GIT:")
+            print("   [WINDOWS] Windows: https://git-scm.com/download/win")
+            print("   [MAC] Mac: brew install git")
+            print("   [LINUX] Linux: sudo apt install git")
             return False
         self.logger.info(f"Git đã cài đặt: {stdout.strip()}")
-        print(f"✅ {stdout.strip()}")
+        print(f"[OK] {stdout.strip()}")
         return True
     
     def notify(self, title, message, duration=5):
@@ -339,14 +350,14 @@ class GitHubUploader:
     def start_background_mode(self):
         # Kiểm tra cấu hình cần thiết
         if not self.repo_path or not self.repo_url:
-            print("\n⚠️  Chưa có cấu hình repository!\n💡 Vui lòng chạy Menu 1 để cấu hình trước")
+            print("\n[WARNING]  Chưa có cấu hình repository!\n[TIP] Vui lòng chạy Menu 1 để cấu hình trước")
             return False
         if not self.auto_upload_interval or not self.auto_upload_prefix:
-            print("\n⚠️  Chưa có cấu hình auto upload!\n💡 Vui lòng chạy Menu 7 để cấu hình trước")
+            print("\n[WARNING]  Chưa có cấu hình auto upload!\n[TIP] Vui lòng chạy Menu 7 để cấu hình trước")
             return False
 
         if self.is_background_running():
-            print("\nℹ️  Auto upload nền đang chạy rồi")
+            print("\n[INFO]  Auto upload nền đang chạy rồi")
             return True
 
         # Ghi file cấu hình cho background
@@ -362,7 +373,7 @@ class GitHubUploader:
             if not ok:
                 raise RuntimeError('write bg config failed')
         except Exception as e:
-            print(f"❌ Lỗi lưu cấu hình nền: {e}")
+            print(f"[ERROR] Lỗi lưu cấu hình nền: {e}")
             return False
 
         # Khởi chạy tiến trình nền detach
@@ -386,18 +397,18 @@ class GitHubUploader:
                 startupinfo=startupinfo,
             )
             self._write_bg_pid(proc.pid)
-            print("\n🟢 Đã bật auto upload chạy nền! Bạn có thể tắt tool an toàn.")
+            print("\n[RUNNING] Đã bật auto upload chạy nền! Bạn có thể tắt tool an toàn.")
             self.logger.info(f"Bật background mode, PID={proc.pid}")
             return True
         except Exception as e:
-            print(f"❌ Lỗi khởi chạy nền: {e}")
+            print(f"[ERROR] Lỗi khởi chạy nền: {e}")
             self.logger.exception("Lỗi khởi chạy nền")
             return False
 
     def stop_background_mode(self):
         pid = self._read_bg_pid()
         if not self._is_process_running(pid):
-            print("\nℹ️  Không phát hiện tiến trình auto upload nền đang chạy")
+            print("\n[INFO]  Không phát hiện tiến trình auto upload nền đang chạy")
             self._clear_bg_pid()
             return True
         try:
@@ -407,11 +418,11 @@ class GitHubUploader:
             else:
                 os.kill(pid, 15)
             self._clear_bg_pid()
-            print("\n✅ Đã dừng auto upload nền!")
+            print("\n[OK] Đã dừng auto upload nền!")
             self.logger.info("Đã dừng background mode")
             return True
         except Exception as e:
-            print(f"❌ Không thể dừng tiến trình: {e}")
+            print(f"[ERROR] Không thể dừng tiến trình: {e}")
             self.logger.exception("Không thể dừng background mode")
             return False
 
@@ -421,40 +432,40 @@ class GitHubUploader:
         success2, email, _ = self.run_command("git config --global user.email", check=False)
         
         if not success or not success2 or not name.strip() or not email.strip():
-            print("\n⚠️  Git chưa được cấu hình!")
-            print("\n📝 Vui lòng cấu hình Git:")
+            print("\n[WARNING]  Git chưa được cấu hình!")
+            print("\n[EDIT] Vui lòng cấu hình Git:")
             
             if not name.strip():
-                user_name = input("   👤 Nhập tên của bạn: ").strip()
+                user_name = safe_input("   [USER] Nhập tên của bạn: ").strip()
                 if user_name:
                     self.run_command(f'git config --global user.name "{user_name}"')
             
             if not email.strip():
-                user_email = input("   📧 Nhập email của bạn: ").strip()
+                user_email = safe_input("   [EMAIL] Nhập email của bạn: ").strip()
                 if user_email:
                     self.run_command(f'git config --global user.email "{user_email}"')
             
-            print("✅ Đã cấu hình Git!")
+            print("[OK] Đã cấu hình Git!")
         else:
-            print(f"✅ Git User: {name.strip()} <{email.strip()}>")
+            print(f"[OK] Git User: {name.strip()} <{email.strip()}>")
     
     def create_gitignore(self):
         """Tạo file .gitignore"""
         gitignore_path = os.path.join(self.repo_path, ".gitignore")
         
         if os.path.exists(gitignore_path):
-            print("ℹ️  File .gitignore đã tồn tại")
+            print("[INFO]  File .gitignore đã tồn tại")
             return
         
-        print("\n📝 Tạo file .gitignore")
+        print("\n[EDIT] Tạo file .gitignore")
         print("Chọn template:")
         print("1. 🐍 Python")
-        print("2. 📦 Node.js")
-        print("3. ☕ Java")
-        print("4. 🔧 C/C++")
-        print("0. ❌ Bỏ qua")
+        print("2. [PACKAGE] Node.js")
+        print("3. [JAVA] Java")
+        print("4. [C++] C/C++")
+        print("0. [ERROR] Bỏ qua")
         
-        choice = input("\nLựa chọn (0-4): ").strip()
+        choice = safe_input("\nLựa chọn (0-4): ").strip()
         
         templates = {
             "1": "# Python\n__pycache__/\n*.py[cod]\nvenv/\nenv/\n*.egg-info/\ndist/\nbuild/\n",
@@ -467,18 +478,18 @@ class GitHubUploader:
             try:
                 with open(gitignore_path, 'w', encoding='utf-8') as f:
                     f.write(templates[choice])
-                print("✅ Đã tạo .gitignore")
+                print("[OK] Đã tạo .gitignore")
             except Exception as e:
-                print(f"❌ Lỗi tạo .gitignore: {e}")
+                print(f"[ERROR] Lỗi tạo .gitignore: {e}")
     
     def show_git_status(self):
         """Hiển thị trạng thái Git"""
-        print("\n📊 TRẠNG THÁI GIT:")
+        print("\n[STATUS] TRẠNG THÁI GIT:")
         success, stdout, _ = self.run_command(f'cd "{self.repo_path}" && git status --short')
         if success and stdout.strip():
             print(stdout)
         else:
-            print("   ℹ️  Không có thay đổi nào")
+            print("   [INFO]  Không có thay đổi nào")
     
     def init_git_repo(self):
         """Khởi tạo Git repository nếu chưa có"""
@@ -487,16 +498,16 @@ class GitHubUploader:
         self.run_command(safe_dir_cmd, check=False)
         
         if not os.path.exists(os.path.join(self.repo_path, ".git")):
-            print("📦 Đang khởi tạo Git repository...")
+            print("[PACKAGE] Đang khởi tạo Git repository...")
             success, _, error = self.run_command(f'cd "{self.repo_path}" && git init')
             if success:
-                print("✅ Đã khởi tạo Git repository")
+                print("[OK] Đã khởi tạo Git repository")
                 
-                create = input("Bạn có muốn tạo file .gitignore? (y/n): ").lower()
+                create = safe_input("Bạn có muốn tạo file .gitignore? (y/n): ").lower()
                 if create == 'y':
                     self.create_gitignore()
             else:
-                print(f"❌ Lỗi khởi tạo: {error}")
+                print(f"[ERROR] Lỗi khởi tạo: {error}")
                 return False
         return True
     
@@ -509,28 +520,28 @@ class GitHubUploader:
         
         if success:
             current_url = stdout.strip()
-            print(f"📡 Remote hiện tại: {current_url}")
+            print(f"[REMOTE] Remote hiện tại: {current_url}")
             
             if current_url != self.repo_url:
-                change = input("URL khác. Cập nhật? (y/n): ").lower()
+                change = safe_input("URL khác. Cập nhật? (y/n): ").lower()
                 if change == 'y':
                     self.run_command(f'cd "{self.repo_path}" && git remote set-url origin {self.repo_url}')
-                    print("✅ Đã cập nhật remote URL")
+                    print("[OK] Đã cập nhật remote URL")
         else:
-            print("📡 Đang thêm remote repository...")
+            print("[REMOTE] Đang thêm remote repository...")
             success, _, error = self.run_command(
                 f'cd "{self.repo_path}" && git remote add origin {self.repo_url}'
             )
             if success:
-                print("✅ Đã thêm remote repository")
+                print("[OK] Đã thêm remote repository")
             else:
-                print(f"❌ Lỗi thêm remote: {error}")
+                print(f"[ERROR] Lỗi thêm remote: {error}")
                 return False
         return True
     
     def git_add_all(self):
         """Git add tất cả file"""
-        print("\n📝 Đang thêm files vào staging...")
+        print("\n[EDIT] Đang thêm files vào staging...")
         
         success, stdout, _ = self.run_command(
             f'cd "{self.repo_path}" && git status --short',
@@ -542,33 +553,33 @@ class GitHubUploader:
         
         success, _, error = self.run_command(f'cd "{self.repo_path}" && git add .')
         if success:
-            print("✅ Đã thêm tất cả files")
+            print("[OK] Đã thêm tất cả files")
             return True
         else:
-            print(f"❌ Lỗi khi thêm files: {error}")
+            print(f"[ERROR] Lỗi khi thêm files: {error}")
             return False
     
     def git_commit(self, message):
         """Git commit với message"""
-        print(f"\n💬 Đang commit với message: '{message}'")
+        print(f"\n[MESSAGE] Đang commit với message: '{message}'")
         success, stdout, error = self.run_command(
             f'cd "{self.repo_path}" && git commit -m "{message}"',
             check=False
         )
         if success:
-            print("✅ Đã commit thành công")
+            print("[OK] Đã commit thành công")
             print(stdout)
             return True
         else:
             if "nothing to commit" in error:
-                print("ℹ️  Không có thay đổi nào để commit")
+                print("[INFO]  Không có thay đổi nào để commit")
                 return True
-            print(f"❌ Lỗi khi commit: {error}")
+            print(f"[ERROR] Lỗi khi commit: {error}")
             return False
     
     def git_push(self, force=False):
         """Git push lên remote"""
-        print(f"\n🚀 Đang đẩy code lên branch '{self.branch}'...")
+        print(f"\n[UPLOAD] Đang đẩy code lên branch '{self.branch}'...")
         
         success, _, _ = self.run_command(
             f'cd "{self.repo_path}" && git rev-parse --verify {self.branch}',
@@ -576,7 +587,7 @@ class GitHubUploader:
         )
         
         if not success:
-            print(f"🌿 Branch '{self.branch}' chưa tồn tại, đang tạo mới...")
+            print(f"[BRANCH] Branch '{self.branch}' chưa tồn tại, đang tạo mới...")
             self.run_command(f'cd "{self.repo_path}" && git checkout -b {self.branch}')
         
         force_flag = " --force" if force else ""
@@ -586,32 +597,32 @@ class GitHubUploader:
         )
         
         if success:
-            print("✅ Đã đẩy code lên GitHub thành công! 🎉")
+            print("[OK] Đã đẩy code lên GitHub thành công! [SUCCESS]")
             print(stdout)
             return True
         else:
-            print(f"❌ Lỗi khi push: {error}")
+            print(f"[ERROR] Lỗi khi push: {error}")
             
             if "rejected" in error or "non-fast-forward" in error:
-                print("\n💡 Remote có commits mới hơn!")
+                print("\n[TIP] Remote có commits mới hơn!")
                 print("Lựa chọn:")
                 print("1. Pull và merge (khuyên dùng)")
                 print("2. Force push (nguy hiểm)")
                 print("0. Hủy")
                 
-                choice = input("\nLựa chọn (0-2): ").strip()
+                choice = safe_input("\nLựa chọn (0-2): ").strip()
                 
                 if choice == "1":
-                    print("🔄 Đang pull code...")
+                    print("[SYNC] Đang pull code...")
                     self.run_command(f'cd "{self.repo_path}" && git pull origin {self.branch}')
                     return self.git_push()
                 elif choice == "2":
-                    confirm = input("⚠️  Bạn chắc chắn muốn force push? (yes/no): ")
+                    confirm = safe_input("[WARNING]  Bạn chắc chắn muốn force push? (yes/no): ")
                     if confirm.lower() == "yes":
                         return self.git_push(force=True)
             
             elif "Authentication" in error or "denied" in error:
-                print("\n❌ LỖI XÁC THỰC!")
+                print("\n[ERROR] LỖI XÁC THỰC!")
                 print("Vui lòng kiểm tra:")
                 print("1. Token/Password đã đúng chưa?")
                 print("2. SSH key đã được thêm vào GitHub chưa?")
@@ -632,20 +643,20 @@ class GitHubUploader:
             path_txt = bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else (self.repo_path or '')
             branch_txt = (bg_cfg.get('branch') if bg_cfg and bg_cfg.get('branch') else self.branch) or ''
             last_txt = ''
-            leading_icon = '🟢'
+            leading_icon = '[RUNNING]'
             if bg_stat and bg_stat.get('timestamp'):
                 res = (bg_stat.get('result') or '').lower()
                 if res == 'success':
-                    leading_icon = '🟢'
-                    res_icon = '✅'
+                    leading_icon = '[RUNNING]'
+                    res_icon = '[OK]'
                 elif res == 'failure':
-                    leading_icon = '🔴'
-                    res_icon = '⚠️'
+                    leading_icon = '[STOPPED]'
+                    res_icon = '[WARNING]'
                 elif res in ('start', 'nochange'):
-                    leading_icon = '🟡'
-                    res_icon = '⏳'
+                    leading_icon = '[WAIT]'
+                    res_icon = '[WAIT]'
                 else:
-                    res_icon = '➖'
+                    res_icon = '[NONE]'
                 last_txt = f" | last {bg_stat.get('timestamp')} {res_icon}"
             print(f"\n{leading_icon} {self.t('status_bg_on', 'TỰ ĐỘNG UPLOAD NỀN: ĐANG CHẠY')} ({interval_txt} | msg: {prefix_txt} | dir: {path_txt} | br: {branch_txt}){last_txt}")
         else:
@@ -656,23 +667,23 @@ class GitHubUploader:
                 branch_txt = bg_cfg.get('branch') or ''
                 details = "; ".join([s for s in [interval_txt, f"msg: {prefix_txt}" if prefix_txt else '', f"dir: {path_txt}" if path_txt else '', f"br: {branch_txt}" if branch_txt else ''] if s])
                 suffix = f" (cấu hình sẵn: {details})" if details else ""
-                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}{suffix}")
+                print(f"\n[OFF] {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}{suffix}")
             else:
-                print(f"\n⚪ {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}")
+                print(f"\n[OFF] {self.t('status_bg_off', 'TỰ ĐỘNG UPLOAD NỀN: BẬT')}")
         
-        print(f"\n📋 {self.t('menu_title', 'MENU CHÍNH:')}")
-        print(f"1. 🚀 {self.t('menu_upload', 'Upload code lên GitHub')}")
-        print(f"2. 📊 {self.t('menu_status', 'Xem trạng thái Git')}")
-        print(f"3. 📝 {self.t('menu_gitignore', 'Tạo/Sửa .gitignore')}")
-        print(f"4. 🔐 {self.t('menu_auth_help', 'Hướng dẫn xác thực GitHub')}")
-        print(f"5. 💾 {self.t('menu_saved_cfg', 'Quản lý cấu hình đã lưu')}")
-        print(f"6. 📚 {self.t('menu_guide', 'Hướng dẫn cài đặt & sử dụng')}")
-        print(f"7. ⏰ {self.t('menu_auto_cfg', 'Cấu hình tự động upload')}")
+        print(f"\n[MENU] {self.t('menu_title', 'MENU CHÍNH:')}")
+        print(f"1. [UPLOAD] {self.t('menu_upload', 'Upload code lên GitHub')}")
+        print(f"2. [STATUS] {self.t('menu_status', 'Xem trạng thái Git')}")
+        print(f"3. [EDIT] {self.t('menu_gitignore', 'Tạo/Sửa .gitignore')}")
+        print(f"4. [AUTH] {self.t('menu_auth_help', 'Hướng dẫn xác thực GitHub')}")
+        print(f"5. [SAVE] {self.t('menu_saved_cfg', 'Quản lý cấu hình đã lưu')}")
+        print(f"6. [GUIDE] {self.t('menu_guide', 'Hướng dẫn cài đặt & sử dụng')}")
+        print(f"7. [TIME] {self.t('menu_auto_cfg', 'Cấu hình tự động upload')}")
         
         if self.is_background_running():
             pid = self._read_bg_pid()
             base = self.t('menu_auto_toggle_off', 'Dừng auto upload chạy nền')
-            label = f"8. 🔴 {base} (PID {pid})" if pid else f"8. 🔴 {base}"
+            label = f"8. [STOPPED] {base} (PID {pid})" if pid else f"8. [STOPPED] {base}"
             print(label)
         else:
             interval_txt = None
@@ -682,27 +693,27 @@ class GitHubUploader:
             elif self.auto_upload_interval:
                 interval_txt = f"mỗi {self.auto_upload_interval} phút"
             suffix = f" - {interval_txt}" if interval_txt else ""
-            print(f"8. 🟢 {self.t('menu_auto_toggle_on', 'Bật auto upload (chạy nền, vẫn chạy khi tắt tool)')}{suffix}")
+            print(f"8. [RUNNING] {self.t('menu_auto_toggle_on', 'Bật auto upload (chạy nền, vẫn chạy khi tắt tool)')}{suffix}")
         
-        print(f"9. 📄 {self.t('menu_logs', 'Xem logs')}")
-        print(f"0. 👋 {self.t('menu_exit', 'Thoát')}")
+        print(f"9. [LOG] {self.t('menu_logs', 'Xem logs')}")
+        print(f"0. [EXIT] {self.t('menu_exit', 'Thoát')}")
         
-        return input(f"\n➤ {self.t('prompt_choice', 'Chọn chức năng (0-9): ')}").strip()
+        return safe_input(f"\n-> {self.t('prompt_choice', 'Chọn chức năng (0-9): ')}").strip()
     
     def show_simple_guide(self):
         """Hiển thị hướng dẫn đơn giản"""
         self.clear_screen()
         self.print_banner()
         
-        print("\n📚 HƯỚNG DẪN SỬ DỤNG\n")
+        print("\n[GUIDE] HƯỚNG DẪN SỬ DỤNG\n")
         print("=" * 60)
         
-        print("\n🔧 1. CÀI ĐẶT GIT:")
-        print("   🪟 Windows: https://git-scm.com/download/win")
-        print("   🍎 Mac: brew install git")
-        print("   🐧 Linux: sudo apt install git")
+        print("\n[C++] 1. CÀI ĐẶT GIT:")
+        print("   [WINDOWS] Windows: https://git-scm.com/download/win")
+        print("   [MAC] Mac: brew install git")
+        print("   [LINUX] Linux: sudo apt install git")
         
-        print("\n⚙️  2. CẤU HÌNH GIT:")
+        print("\n[CONFIG]  2. CẤU HÌNH GIT:")
         print('   git config --global user.name "Tên"')
         print('   git config --global user.email "email@example.com"')
         
@@ -712,13 +723,13 @@ class GitHubUploader:
         print("   📍 Bước 3: Chọn quyền: repo, workflow")
         print("   📍 Bước 4: Copy token (chỉ hiện 1 lần!)")
         
-        print("\n🔐 4. SỬ DỤNG TOKEN:")
+        print("\n[AUTH] 4. SỬ DỤNG TOKEN:")
         print("   • Khi push lần đầu, Git hỏi username & password")
         print("   • Username: tên GitHub của bạn")
         print("   • Password: DÁN TOKEN vào (KHÔNG phải password GitHub)")
         print("   • Token sẽ được lưu tự động")
         
-        print("\n🚀 5. UPLOAD CODE:")
+        print("\n[UPLOAD] 5. UPLOAD CODE:")
         print("   • Chọn menu 1")
         print("   • Nhập đường dẫn thư mục code")
         print("   • Nhập URL repository")
@@ -726,14 +737,14 @@ class GitHubUploader:
         print("   • Nhập commit message")
         print("   • Xác nhận và đợi!")
         
-        print("\n⚠️  6. XỬ LÝ LỖI:")
+        print("\n[WARNING]  6. XỬ LÝ LỖI:")
         print("   • 'git not recognized': Khởi động lại máy")
         print("   • 'Authentication failed': Token/Password sai")
         print("   • 'rejected': Chọn Pull và merge")
         
         print("\n" + "=" * 60)
         
-        input("\n✅ Nhấn Enter để quay lại menu...")
+        input("\n[OK] Nhấn Enter để quay lại menu...")
     
     def manage_saved_configs(self):
         """Quản lý các cấu hình đã lưu"""
@@ -745,78 +756,78 @@ class GitHubUploader:
         
         if not self.config:
             print("\n📭 Chưa có cấu hình nào được lưu")
-            input("\n✅ Nhấn Enter để quay lại...")
+            input("\n[OK] Nhấn Enter để quay lại...")
             return
         
-        print("\n💾 CÁC CẤU HÌNH ĐÃ LƯU:\n")
+        print("\n[SAVE] CÁC CẤU HÌNH ĐÃ LƯU:\n")
         
         try:
             configs = [(name, cfg) for name, cfg in self.config.items() if isinstance(cfg, dict)]
         except Exception:
             configs = []
         for i, (name, cfg) in enumerate(configs, 1):
-            print(f"{i}. 📦 {name}")
+            print(f"{i}. [PACKAGE] {name}")
             print(f"   📁 Thư mục: {cfg.get('path', 'N/A')}")
             print(f"   🔗 Repository: {cfg.get('url', 'N/A')}")
-            print(f"   🌿 Branch: {cfg.get('branch', 'N/A')}\n")
+            print(f"   [BRANCH] Branch: {cfg.get('branch', 'N/A')}\n")
         
         print("Chọn:")
-        print("L - 📥 Load cấu hình")
-        print("D - 🗑️  Xóa cấu hình")
-        print("0 - ↩️  Quay lại")
+        print("L - [DOWNLOAD] Load cấu hình")
+        print("D - [DELETE]  Xóa cấu hình")
+        print("0 - [BACK]  Quay lại")
         
-        choice = input("\n➤ Lựa chọn: ").strip().upper()
+        choice = safe_input("\n-> Lựa chọn: ").strip().upper()
         
         if choice == 'L':
-            idx = input("Nhập số thứ tự: ").strip()
+            idx = safe_input("Nhập số thứ tự: ").strip()
             try:
                 idx = int(idx) - 1
                 if 0 <= idx < len(configs):
                     name, cfg = configs[idx]
                     if not isinstance(cfg, dict):
-                        print("❌ Cấu hình không hợp lệ!")
-                        input("\n✅ Nhấn Enter để quay lại...")
+                        print("[ERROR] Cấu hình không hợp lệ!")
+                        input("\n[OK] Nhấn Enter để quay lại...")
                         return
                     path = (cfg.get('path') or '').strip()
                     url = (cfg.get('url') or '').strip()
                     branch = (cfg.get('branch') or 'main').strip() or 'main'
                     if not path or not os.path.exists(path):
-                        print("❌ Thư mục trong cấu hình không tồn tại hoặc trống!")
-                        input("\n✅ Nhấn Enter để quay lại...")
+                        print("[ERROR] Thư mục trong cấu hình không tồn tại hoặc trống!")
+                        input("\n[OK] Nhấn Enter để quay lại...")
                         return
                     if not url:
-                        print("❌ URL repository trong cấu hình trống!")
-                        input("\n✅ Nhấn Enter để quay lại...")
+                        print("[ERROR] URL repository trong cấu hình trống!")
+                        input("\n[OK] Nhấn Enter để quay lại...")
                         return
                     self.repo_path = path
                     self.repo_url = url
                     self.branch = branch
-                    print(f"✅ Đã load cấu hình '{name}'")
-                    input("\n✅ Nhấn Enter để tiếp tục...")
+                    print(f"[OK] Đã load cấu hình '{name}'")
+                    input("\n[OK] Nhấn Enter để tiếp tục...")
             except:
-                print("❌ Lựa chọn không hợp lệ")
+                print("[ERROR] Lựa chọn không hợp lệ")
         
         elif choice == 'D':
-            idx = input("Nhập số thứ tự cần xóa: ").strip()
+            idx = safe_input("Nhập số thứ tự cần xóa: ").strip()
             try:
                 idx = int(idx) - 1
                 if 0 <= idx < len(configs):
                     name = configs[idx][0]
                     del self.config[name]
                     self.save_config()
-                    print(f"✅ Đã xóa cấu hình '{name}'")
-                    input("\n✅ Nhấn Enter để tiếp tục...")
+                    print(f"[OK] Đã xóa cấu hình '{name}'")
+                    input("\n[OK] Nhấn Enter để tiếp tục...")
             except:
-                print("❌ Lựa chọn không hợp lệ")
+                print("[ERROR] Lựa chọn không hợp lệ")
     
     def auto_upload_worker(self, interval_minutes, commit_prefix):
         """Worker thread cho auto upload"""
         interval_seconds = interval_minutes * 60
         
         self.logger.info(f"Auto upload worker bắt đầu - Interval: {interval_minutes} phút")
-        print(f"\n🟢 Auto upload đã bắt đầu chạy nền!")
-        print(f"⏰ Upload mỗi {interval_minutes} phút")
-        print("💡 Bạn có thể tiếp tục sử dụng các chức năng khác\n")
+        print(f"\n[RUNNING] Auto upload đã bắt đầu chạy nền!")
+        print(f"[TIME] Upload mỗi {interval_minutes} phút")
+        print("[TIP] Bạn có thể tiếp tục sử dụng các chức năng khác\n")
         time.sleep(2)
         
         upload_count = 0
@@ -857,7 +868,7 @@ class GitHubUploader:
                     
                     if success:
                         self.logger.info(f"Upload #{upload_count} thành công!")
-                        print(f"\n✅ [{timestamp}] Auto upload #{upload_count} thành công!")
+                        print(f"\n[OK] [{timestamp}] Auto upload #{upload_count} thành công!")
                         changed_count, changed_files = self._parse_changed_files(stdout)
                         file_list = ", ".join(changed_files[:5])
                         more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
@@ -866,7 +877,7 @@ class GitHubUploader:
                         self._write_bg_status('success', f'#{upload_count}', upload_count)
                     else:
                         self.logger.error(f"Upload #{upload_count} thất bại: {stderr_push}")
-                        print(f"\n⚠️  [{timestamp}] Auto upload #{upload_count} thất bại")
+                        print(f"\n[WARNING]  [{timestamp}] Auto upload #{upload_count} thất bại")
                         changed_count, changed_files = self._parse_changed_files(stdout)
                         file_list = ", ".join(changed_files[:5])
                         more = "" if changed_count <= 5 else f" (+{changed_count-5} more)"
@@ -883,7 +894,7 @@ class GitHubUploader:
                 
             except Exception as e:
                 self.logger.exception(f"Lỗi trong auto upload worker: {e}")
-                print(f"\n❌ Lỗi auto upload: {e}")
+                print(f"\n[ERROR] Lỗi auto upload: {e}")
                 time.sleep(60)
         
         self.logger.info(f"Auto upload worker dừng - Tổng số lần upload: {upload_count}")
@@ -893,32 +904,32 @@ class GitHubUploader:
         self.clear_screen()
         self.print_banner()
         
-        print("\n⏰ CẤU HÌNH TỰ ĐỘNG UPLOAD")
+        print("\n[TIME] CẤU HÌNH TỰ ĐỘNG UPLOAD")
         print("=" * 60)
         
         # Kiểm tra đã có cấu hình chưa
         if not self.repo_path or not self.repo_url:
-            print("\n⚠️  Chưa có cấu hình repository!")
-            use_saved = input("Bạn có muốn load cấu hình đã lưu? (y/n): ").lower()
+            print("\n[WARNING]  Chưa có cấu hình repository!")
+            use_saved = safe_input("Bạn có muốn load cấu hình đã lưu? (y/n): ").lower()
             
             if use_saved == 'y':
                 self.manage_saved_configs()
                 if not self.repo_path or not self.repo_url:
-                    print("❌ Chưa có cấu hình, vui lòng chạy upload thủ công trước!")
-                    input("\n✅ Nhấn Enter để quay lại...")
+                    print("[ERROR] Chưa có cấu hình, vui lòng chạy upload thủ công trước!")
+                    input("\n[OK] Nhấn Enter để quay lại...")
                     return
             else:
-                print("❌ Vui lòng chạy upload thủ công trước (Menu 1) để cấu hình!")
-                input("\n✅ Nhấn Enter để quay lại...")
+                print("[ERROR] Vui lòng chạy upload thủ công trước (Menu 1) để cấu hình!")
+                input("\n[OK] Nhấn Enter để quay lại...")
                 return
         
-        print(f"\n📋 Cấu hình hiện tại:")
+        print(f"\n[MENU] Cấu hình hiện tại:")
         print(f"   📁 Thư mục: {self.repo_path}")
         print(f"   🔗 Repository: {self.repo_url}")
-        print(f"   🌿 Branch: {self.branch}")
+        print(f"   [BRANCH] Branch: {self.branch}")
         
         # Nhập khoảng thời gian
-        print("\n⏱️  Chọn khoảng thời gian tự động upload:")
+        print("\n[TIME]  Chọn khoảng thời gian tự động upload:")
         print("   1. Mỗi 5 phút")
         print("   2. Mỗi 10 phút")
         print("   3. Mỗi 15 phút")
@@ -927,7 +938,7 @@ class GitHubUploader:
         print("   6. Mỗi 2 giờ")
         print("   7. Tùy chỉnh")
         
-        choice = input("\n➤ Lựa chọn (1-7): ").strip()
+        choice = safe_input("\n-> Lựa chọn (1-7): ").strip()
         
         intervals = {
             "1": 5,
@@ -942,22 +953,22 @@ class GitHubUploader:
             interval = intervals[choice]
         elif choice == "7":
             try:
-                interval = int(input("Nhập số phút (1-1440): ").strip())
+                interval = int(safe_input("Nhập số phút (1-1440): ").strip())
                 if interval < 1 or interval > 1440:
-                    print("❌ Số phút phải từ 1-1440 (24 giờ)")
-                    input("\n✅ Nhấn Enter để quay lại...")
+                    print("[ERROR] Số phút phải từ 1-1440 (24 giờ)")
+                    input("\n[OK] Nhấn Enter để quay lại...")
                     return
             except ValueError:
-                print("❌ Vui lòng nhập số hợp lệ!")
-                input("\n✅ Nhấn Enter để quay lại...")
+                print("[ERROR] Vui lòng nhập số hợp lệ!")
+                input("\n[OK] Nhấn Enter để quay lại...")
                 return
         else:
-            print("❌ Lựa chọn không hợp lệ!")
-            input("\n✅ Nhấn Enter để quay lại...")
+            print("[ERROR] Lựa chọn không hợp lệ!")
+            input("\n[OK] Nhấn Enter để quay lại...")
             return
         
         # Nhập commit message prefix
-        commit_prefix = input("\n💬 Tiền tố commit message (Enter = 'Auto update'): ").strip()
+        commit_prefix = safe_input("\n[MESSAGE] Tiền tố commit message (Enter = 'Auto update'): ").strip()
         if not commit_prefix:
             commit_prefix = "Auto update"
         
@@ -967,52 +978,52 @@ class GitHubUploader:
         
         # Xác nhận
         print("\n" + "=" * 60)
-        print("📋 XÁC NHẬN CẤU HÌNH:")
-        print(f"   ⏰ Khoảng thời gian: Mỗi {interval} phút")
-        print(f"   💬 Commit message: {commit_prefix} - [timestamp]")
+        print("[MENU] XÁC NHẬN CẤU HÌNH:")
+        print(f"   [TIME] Khoảng thời gian: Mỗi {interval} phút")
+        print(f"   [MESSAGE] Commit message: {commit_prefix} - [timestamp]")
         print(f"   📁 Thư mục: {self.repo_path}")
         print(f"   🔗 Repository: {self.repo_url}")
         print("=" * 60)
-        print("\n💡 Sau khi lưu, sử dụng Menu 8 để bật/tắt auto upload")
+        print("\n[TIP] Sau khi lưu, sử dụng Menu 8 để bật/tắt auto upload")
         
-        confirm = input("\n✅ Lưu cấu hình? (y/n): ").lower()
+        confirm = safe_input("\n[OK] Lưu cấu hình? (y/n): ").lower()
         if confirm == 'y':
-            print("✅ Đã lưu cấu hình auto upload!")
-            print("💡 Sử dụng Menu 8 để bật auto upload chạy nền")
+            print("[OK] Đã lưu cấu hình auto upload!")
+            print("[TIP] Sử dụng Menu 8 để bật auto upload chạy nền")
         else:
-            print("❌ Đã hủy!")
+            print("[ERROR] Đã hủy!")
         
-        input("\n✅ Nhấn Enter để quay lại...")
+        input("\n[OK] Nhấn Enter để quay lại...")
     
     def toggle_auto_upload(self):
         """Bật/Tắt auto upload chạy nền (tiếp tục khi tắt tool)"""
         if self.is_background_running():
-            print("\n🔴 DỪNG AUTO UPLOAD NỀN")
+            print("\n[STOPPED] DỪNG AUTO UPLOAD NỀN")
             print("=" * 60)
             self.stop_background_mode()
-            input("\n✅ Nhấn Enter để quay lại...")
+            input("\n[OK] Nhấn Enter để quay lại...")
         else:
-            print("\n🟢 BẬT AUTO UPLOAD NỀN")
+            print("\n[RUNNING] BẬT AUTO UPLOAD NỀN")
             print("=" * 60)
             bg_cfg = self._read_bg_config()
             interval_show = (bg_cfg.get('interval') if bg_cfg and bg_cfg.get('interval') else self.auto_upload_interval) or '?'
             prefix_show = (bg_cfg.get('prefix') if bg_cfg and bg_cfg.get('prefix') else self.auto_upload_prefix) or '?'
             path_show = (bg_cfg.get('path') if bg_cfg and bg_cfg.get('path') else self.repo_path) or '?'
-            print(f"⏰ Upload mỗi {interval_show} phút")
-            print(f"💬 Message: {prefix_show}")
+            print(f"[TIME] Upload mỗi {interval_show} phút")
+            print(f"[MESSAGE] Message: {prefix_show}")
             print(f"📁 Thư mục: {path_show}")
             print("=" * 60)
             ok = self.start_background_mode()
             if ok:
                 time.sleep(1)
-            input("\n✅ Nhấn Enter để quay lại menu...")
+            input("\n[OK] Nhấn Enter để quay lại menu...")
     
     def view_logs(self):
         """Xem logs"""
         self.clear_screen()
         self.print_banner()
         
-        print("\n📄 QUẢN LÝ LOGS")
+        print("\n[LOG] QUẢN LÝ LOGS")
         print("=" * 60)
         
         # Liệt kê các file log
@@ -1022,12 +1033,12 @@ class GitHubUploader:
         )
         
         if not log_files:
-            print("\n❌ Không có file log nào!")
-            input("\n✅ Nhấn Enter để quay lại...")
+            print("\n[ERROR] Không có file log nào!")
+            input("\n[OK] Nhấn Enter để quay lại...")
             return
         
         print(f"\n📁 Thư mục logs: {self.log_dir}")
-        print(f"\n📋 Có {len(log_files)} file log:\n")
+        print(f"\n[MENU] Có {len(log_files)} file log:\n")
         
         for i, log_file in enumerate(log_files[:10], 1):  # Hiển thị 10 file gần nhất
             file_path = os.path.join(self.log_dir, log_file)
@@ -1044,7 +1055,7 @@ class GitHubUploader:
                 first_line = ""
                 last_line = ""
             
-            print(f"{i}. 📄 {log_file} ({size_kb:.1f} KB)")
+            print(f"{i}. [LOG] {log_file} ({size_kb:.1f} KB)")
             if first_line:
                 print(f"   🕐 Bắt đầu: {first_line[:50]}...")
             if last_line and last_line != first_line:
@@ -1059,7 +1070,7 @@ class GitHubUploader:
         print("O - Mở thư mục logs")
         print("0 - Quay lại")
         
-        choice = input("\n➤ Lựa chọn: ").strip().upper()
+        choice = safe_input("\n-> Lựa chọn: ").strip().upper()
         
         if choice.startswith('V '):
             try:
@@ -1067,7 +1078,7 @@ class GitHubUploader:
                 if 0 <= idx < len(log_files):
                     self.display_log_content(log_files[idx])
             except:
-                print("❌ Lựa chọn không hợp lệ!")
+                print("[ERROR] Lựa chọn không hợp lệ!")
         
         elif choice.startswith('T '):
             try:
@@ -1075,7 +1086,7 @@ class GitHubUploader:
                 if 0 <= idx < len(log_files):
                     self.display_log_tail(log_files[idx])
             except:
-                print("❌ Lựa chọn không hợp lệ!")
+                print("[ERROR] Lựa chọn không hợp lệ!")
         
         elif choice.startswith('E '):
             try:
@@ -1083,16 +1094,16 @@ class GitHubUploader:
                 if 0 <= idx < len(log_files):
                     self.display_log_errors(log_files[idx])
             except:
-                print("❌ Lựa chọn không hợp lệ!")
+                print("[ERROR] Lựa chọn không hợp lệ!")
         
         elif choice == 'C':
-            confirm = input("⚠️  Xóa tất cả logs? (yes/no): ")
+            confirm = safe_input("[WARNING]  Xóa tất cả logs? (yes/no): ")
             if confirm.lower() == 'yes':
                 for log_file in log_files:
                     os.remove(os.path.join(self.log_dir, log_file))
-                print("✅ Đã xóa tất cả logs!")
+                print("[OK] Đã xóa tất cả logs!")
                 self.logger.info("Đã xóa tất cả logs cũ")
-            input("\n✅ Nhấn Enter để quay lại...")
+            input("\n[OK] Nhấn Enter để quay lại...")
         
         elif choice == 'O':
             # Mở thư mục logs
@@ -1102,15 +1113,15 @@ class GitHubUploader:
                 os.system(f'open "{self.log_dir}"')
             else:  # Linux
                 os.system(f'xdg-open "{self.log_dir}"')
-            print("✅ Đã mở thư mục logs!")
-            input("\n✅ Nhấn Enter để quay lại...")
+            print("[OK] Đã mở thư mục logs!")
+            input("\n[OK] Nhấn Enter để quay lại...")
     
     def display_log_content(self, log_file):
         """Hiển thị toàn bộ nội dung log"""
         self.clear_screen()
         self.print_banner()
         
-        print(f"\n📄 NỘI DUNG LOG: {log_file}")
+        print(f"\n[LOG] NỘI DUNG LOG: {log_file}")
         print("=" * 60)
         
         file_path = os.path.join(self.log_dir, log_file)
@@ -1119,16 +1130,16 @@ class GitHubUploader:
                 content = f.read()
                 print(content)
         except Exception as e:
-            print(f"❌ Lỗi đọc file: {e}")
+            print(f"[ERROR] Lỗi đọc file: {e}")
         
-        input("\n✅ Nhấn Enter để quay lại...")
+        input("\n[OK] Nhấn Enter để quay lại...")
     
     def display_log_tail(self, log_file, lines=50):
         """Hiển thị n dòng cuối của log"""
         self.clear_screen()
         self.print_banner()
         
-        print(f"\n📄 {lines} DÒNG CUỐI: {log_file}")
+        print(f"\n[LOG] {lines} DÒNG CUỐI: {log_file}")
         print("=" * 60)
         
         file_path = os.path.join(self.log_dir, log_file)
@@ -1138,16 +1149,16 @@ class GitHubUploader:
                 tail_lines = all_lines[-lines:]
                 print(''.join(tail_lines))
         except Exception as e:
-            print(f"❌ Lỗi đọc file: {e}")
+            print(f"[ERROR] Lỗi đọc file: {e}")
         
-        input("\n✅ Nhấn Enter để quay lại...")
+        input("\n[OK] Nhấn Enter để quay lại...")
     
     def display_log_errors(self, log_file):
         """Hiển thị chỉ các dòng ERROR"""
         self.clear_screen()
         self.print_banner()
         
-        print(f"\n❌ CÁC LỖI TRONG: {log_file}")
+        print(f"\n[ERROR] CÁC LỖI TRONG: {log_file}")
         print("=" * 60)
         
         file_path = os.path.join(self.log_dir, log_file)
@@ -1161,13 +1172,13 @@ class GitHubUploader:
                         error_count += 1
             
             if error_count == 0:
-                print("\n✅ Không có lỗi nào!")
+                print("\n[OK] Không có lỗi nào!")
             else:
-                print(f"\n⚠️  Tổng số lỗi: {error_count}")
+                print(f"\n[WARNING]  Tổng số lỗi: {error_count}")
         except Exception as e:
-            print(f"❌ Lỗi đọc file: {e}")
+            print(f"[ERROR] Lỗi đọc file: {e}")
         
-        input("\n✅ Nhấn Enter để quay lại...")
+        input("\n[OK] Nhấn Enter để quay lại...")
     
     def auto_upload(self):
         """Quy trình tự động upload"""
@@ -1183,48 +1194,48 @@ class GitHubUploader:
         
         self.check_git_config()
         
-        print("\n📋 NHẬP THÔNG TIN:")
+        print("\n[MENU] NHẬP THÔNG TIN:")
         print("-" * 60)
         
         if self.config:
-            use_saved = input("Bạn có muốn dùng cấu hình đã lưu? (y/n): ").lower()
+            use_saved = safe_input("Bạn có muốn dùng cấu hình đã lưu? (y/n): ").lower()
             if use_saved == 'y':
                 self.manage_saved_configs()
                 if not self.repo_path or not self.repo_url:
                     return False
         
         if not self.repo_path:
-            self.repo_path = input("📁 Đường dẫn thư mục code (Enter = hiện tại): ").strip()
+            self.repo_path = safe_input("📁 Đường dẫn thư mục code (Enter = hiện tại): ").strip()
             if not self.repo_path:
                 self.repo_path = os.getcwd()
         
         if not os.path.exists(self.repo_path):
             self.logger.error(f"Thư mục không tồn tại: {self.repo_path}")
-            print(f"❌ Thư mục '{self.repo_path}' không tồn tại!")
+            print(f"[ERROR] Thư mục '{self.repo_path}' không tồn tại!")
             return False
         
         self.logger.info(f"Repository path: {self.repo_path}")
         
         if not self.repo_url:
-            self.repo_url = input("🔗 URL GitHub Repository: ").strip()
+            self.repo_url = safe_input("🔗 URL GitHub Repository: ").strip()
             if not self.repo_url:
-                print("❌ URL không được để trống!")
+                print("[ERROR] URL không được để trống!")
                 return False
         
         self.logger.info(f"Repository URL: {self.repo_url}")
         
-        self.branch = input(f"🌿 Branch (Enter = {self.branch}): ").strip() or self.branch
+        self.branch = safe_input(f"[BRANCH] Branch (Enter = {self.branch}): ").strip() or self.branch
         self.logger.info(f"Branch: {self.branch}")
         
-        commit_msg = input("💬 Commit message (Enter = tự động): ").strip()
+        commit_msg = safe_input("[MESSAGE] Commit message (Enter = tự động): ").strip()
         if not commit_msg:
             commit_msg = f"Auto update {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
         self.logger.info(f"Commit message: {commit_msg}")
         
-        save_cfg = input("\n💾 Lưu cấu hình này? (y/n): ").lower()
+        save_cfg = safe_input("\n[SAVE] Lưu cấu hình này? (y/n): ").lower()
         if save_cfg == 'y':
-            cfg_name = input("   📝 Tên cấu hình: ").strip() or "default"
+            cfg_name = safe_input("   [EDIT] Tên cấu hình: ").strip() or "default"
             self.config[cfg_name] = {
                 'path': self.repo_path,
                 'url': self.repo_url,
@@ -1232,24 +1243,24 @@ class GitHubUploader:
             }
             self.save_config()
             self.logger.info(f"Đã lưu cấu hình: {cfg_name}")
-            print("✅ Đã lưu cấu hình!")
+            print("[OK] Đã lưu cấu hình!")
         
         print("\n" + "=" * 60)
-        print("📋 XÁC NHẬN THÔNG TIN:")
+        print("[MENU] XÁC NHẬN THÔNG TIN:")
         print(f"   📁 Thư mục: {self.repo_path}")
         print(f"   🔗 Repository: {self.repo_url}")
-        print(f"   🌿 Branch: {self.branch}")
-        print(f"   💬 Message: {commit_msg}")
+        print(f"   [BRANCH] Branch: {self.branch}")
+        print(f"   [MESSAGE] Message: {commit_msg}")
         print("=" * 60)
         
-        confirm = input("\n✅ Xác nhận và bắt đầu upload? (y/n): ").lower()
+        confirm = safe_input("\n[OK] Xác nhận và bắt đầu upload? (y/n): ").lower()
         if confirm != 'y':
             self.logger.info("Upload bị hủy bởi người dùng")
-            print("❌ Đã hủy!")
+            print("[ERROR] Đã hủy!")
             return False
         
         print("\n" + "=" * 60)
-        print("🚀 BẮT ĐẦU UPLOAD...")
+        print("[UPLOAD] BẮT ĐẦU UPLOAD...")
         print("=" * 60)
         
         self.logger.info("Bắt đầu quá trình upload")
@@ -1277,7 +1288,7 @@ class GitHubUploader:
             return False
         
         print("\n" + "=" * 60)
-        print("🎉 HOÀN TẤT! Code đã được đẩy lên GitHub thành công!")
+        print("[SUCCESS] HOÀN TẤT! Code đã được đẩy lên GitHub thành công!")
         print("=" * 60)
         
         self.logger.info("Upload thành công!")
@@ -1289,23 +1300,23 @@ class GitHubUploader:
             'branch': self.branch
         }
         self.save_config()
-        print("✅ Đã lưu cấu hình!")
+        print("[OK] Đã lưu cấu hình!")
         
         print("\n" + "=" * 60)
-        print("📋 XÁC NHẬN THÔNG TIN:")
+        print("[MENU] XÁC NHẬN THÔNG TIN:")
         print(f"   📁 Thư mục: {self.repo_path}")
         print(f"   🔗 Repository: {self.repo_url}")
-        print(f"   🌿 Branch: {self.branch}")
-        print(f"   💬 Message: {commit_msg}")
+        print(f"   [BRANCH] Branch: {self.branch}")
+        print(f"   [MESSAGE] Message: {commit_msg}")
         print("=" * 60)
         
-        confirm = input("\n✅ Xác nhận và bắt đầu upload? (y/n): ").lower()
+        confirm = safe_input("\n[OK] Xác nhận và bắt đầu upload? (y/n): ").lower()
         if confirm != 'y':
-            print("❌ Đã hủy!")
+            print("[ERROR] Đã hủy!")
             return False
         
         print("\n" + "=" * 60)
-        print("🚀 BẮT ĐẦU UPLOAD...")
+        print("[UPLOAD] BẮT ĐẦU UPLOAD...")
         print("=" * 60)
         
         if not self.init_git_repo():
@@ -1326,7 +1337,7 @@ class GitHubUploader:
             return False
         
         print("\n" + "=" * 60)
-        print("🎉 HOÀN TẤT! Code đã được đẩy lên GitHub thành công!")
+        print("[SUCCESS] HOÀN TẤT! Code đã được đẩy lên GitHub thành công!")
         print("=" * 60)
         return True
     
@@ -1339,7 +1350,7 @@ class GitHubUploader:
             # Đọc cấu hình nền
             cfg = self._safe_read_json(self.bg_config_file, default=None)
             if not cfg:
-                print("❌ Không tìm thấy hoặc lỗi cấu hình nền, thoát!")
+                print("[ERROR] Không tìm thấy hoặc lỗi cấu hình nền, thoát!")
                 return 1
             self.repo_path = cfg.get('path')
             self.repo_url = cfg.get('url')
@@ -1468,23 +1479,23 @@ class GitHubUploader:
             
             if choice == "1":
                 self.auto_upload()
-                input("\n✅ Nhấn Enter để quay lại menu...")
+                input("\n[OK] Nhấn Enter để quay lại menu...")
             
             elif choice == "2":
                 self.clear_screen()
                 self.print_banner()
                 if not self.repo_path:
-                    self.repo_path = input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
+                    self.repo_path = safe_input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
                 self.show_git_status()
-                input("\n✅ Nhấn Enter để quay lại menu...")
+                input("\n[OK] Nhấn Enter để quay lại menu...")
             
             elif choice == "3":
                 self.clear_screen()
                 self.print_banner()
                 if not self.repo_path:
-                    self.repo_path = input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
+                    self.repo_path = safe_input("\n📁 Đường dẫn thư mục: ").strip() or os.getcwd()
                 self.create_gitignore()
-                input("\n✅ Nhấn Enter để quay lại menu...")
+                input("\n[OK] Nhấn Enter để quay lại menu...")
             
             elif choice == "4":
                 self.show_simple_guide()
@@ -1508,19 +1519,19 @@ class GitHubUploader:
                 # Dừng auto upload nếu đang chạy
                 if self.auto_upload_running:
                     self.logger.info("Đang dừng auto upload...")
-                    print("\n⚠️  Đang dừng tự động upload...")
+                    print("\n[WARNING]  Đang dừng tự động upload...")
                     self.auto_upload_running = False
                     if self.auto_upload_thread:
                         self.auto_upload_thread.join(timeout=5)
                 
                 self.logger.info("Tool đã đóng")
                 self.logger.info("=" * 60)
-                print("\n👋 Cảm ơn bạn đã sử dụng! Tạm biệt!")
+                print("\n[EXIT] Cảm ơn bạn đã sử dụng! Tạm biệt!")
                 break
             
             else:
-                print("❌ Lựa chọn không hợp lệ!")
-                input("\n✅ Nhấn Enter để thử lại...")
+                print("[ERROR] Lựa chọn không hợp lệ!")
+                input("\n[OK] Nhấn Enter để thử lại...")
 
 def main():
     try:
@@ -1532,10 +1543,10 @@ def main():
         uploader.select_language()
         uploader.run()
     except KeyboardInterrupt:
-        print("\n\n⚠️  Đã dừng chương trình!")
+        print("\n\n[WARNING]  Đã dừng chương trình!")
         sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Lỗi không mong muốn: {e}")
+        print(f"\n[ERROR] Lỗi không mong muốn: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

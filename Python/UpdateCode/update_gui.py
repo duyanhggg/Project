@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 import time
 import importlib
@@ -77,16 +78,24 @@ class UpdateGUI(tk.Tk):
         ttk.Button(frm, text='Stop Background', command=self.stop_background).grid(column=3, row=6, pady=(6, 0))
         ttk.Button(frm, text='Status', command=self.show_bg_status).grid(column=4, row=6, pady=(6, 0))
 
+        # Status indicator
+        ttk.Label(frm, text='Status:').grid(column=0, row=7, sticky=tk.W, pady=(6, 0))
+        self.status_label = ttk.Label(frm, text='[CHECKING] Initializing...', foreground='blue')
+        self.status_label.grid(column=1, row=7, sticky=tk.W, pady=(6, 0))
+        ttk.Button(frm, text='Refresh Status', command=self.refresh_status).grid(column=2, row=7, pady=(6, 0))
+
         # Log viewer
-        ttk.Label(frm, text='Recent log (tail):').grid(column=0, row=7, sticky=tk.W, pady=(12, 0))
+        ttk.Label(frm, text='Recent log (tail):').grid(column=0, row=8, sticky=tk.W, pady=(12, 0))
         self.log_text = scrolledtext.ScrolledText(frm, width=100, height=20)
-        self.log_text.grid(column=0, row=8, columnspan=5, pady=(6, 0))
+        self.log_text.grid(column=0, row=9, columnspan=5, pady=(6, 0))
 
         # Help
-        ttk.Button(frm, text='Help / Instructions', command=self.show_help).grid(column=0, row=9, pady=(10, 0), sticky=tk.W)
+        ttk.Button(frm, text='Help / Instructions', command=self.show_help).grid(column=0, row=10, pady=(10, 0), sticky=tk.W)
 
         # Periodic refresh
         self.after(1500, self.refresh_tail)
+        # Initial status check
+        self.after(500, self.refresh_status)
 
     def browse_repo(self):
         d = filedialog.askdirectory(title='Select repository folder')
@@ -218,6 +227,7 @@ class UpdateGUI(tk.Tk):
             ok = self.uploader.start_background_mode()
             messagebox.showinfo('Background', f'Start background: {ok}')
             self.refresh_tail()
+            self.refresh_status()  # Update status display
 
         threading.Thread(target=bg_worker, daemon=True).start()
 
@@ -226,14 +236,61 @@ class UpdateGUI(tk.Tk):
             ok = self.uploader.stop_background_mode()
             messagebox.showinfo('Background', f'Stop background: {ok}')
             self.refresh_tail()
+            self.refresh_status()  # Update status display
         threading.Thread(target=bg_stop, daemon=True).start()
 
+    def refresh_status(self):
+        """Update the status label with current background process status"""
+        try:
+            pid = self.uploader._read_bg_pid()
+            status = self.uploader._read_bg_status() or {}
+            running = self.uploader._is_process_running(pid)
+            
+            if running:
+                self.status_label.config(text='[RUNNING] Background process is active', foreground='green')
+            else:
+                self.status_label.config(text='[STOPPED] Background process is not running', foreground='red')
+                
+            # Update status every 5 seconds
+            self.after(5000, self.refresh_status)
+        except Exception as e:
+            self.status_label.config(text=f'[ERROR] Error checking status: {e}', foreground='red')
+            self.after(10000, self.refresh_status)  # Retry in 10 seconds on error
+
     def show_bg_status(self):
-        pid = self.uploader._read_bg_pid()
-        status = self.uploader._read_bg_status() or {}
-        running = self.uploader._is_process_running(pid)
-        txt = f"PID: {pid}\nRunning: {running}\nStatus: {status}"
-        messagebox.showinfo('Background Status', txt)
+        """Show detailed background status in a dialog"""
+        try:
+            pid = self.uploader._read_bg_pid()
+            status = self.uploader._read_bg_status() or {}
+            running = self.uploader._is_process_running(pid)
+            
+            # Format status information
+            status_text = f"Background Process Status\n{'='*30}\n\n"
+            status_text += f"Process ID: {pid if pid else 'Not found'}\n"
+            status_text += f"Running: {'Yes' if running else 'No'}\n"
+            
+            if status:
+                status_text += f"\nLast Activity:\n"
+                if status.get('timestamp'):
+                    status_text += f"  Time: {status['timestamp']}\n"
+                if status.get('result'):
+                    result = status['result']
+                    result_icon = '[OK]' if result.lower() == 'success' else '[FAIL]' if result.lower() == 'failure' else '[WAIT]'
+                    status_text += f"  Result: {result_icon} {result}\n"
+                if status.get('message'):
+                    status_text += f"  Message: {status['message']}\n"
+                if status.get('interval'):
+                    status_text += f"  Interval: {status['interval']} minutes\n"
+                if status.get('path'):
+                    status_text += f"  Repository: {status['path']}\n"
+                if status.get('branch'):
+                    status_text += f"  Branch: {status['branch']}\n"
+            else:
+                status_text += "\nNo status information available"
+                
+            messagebox.showinfo('Detailed Background Status', status_text)
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to get status: {e}')
 
     def open_logs(self):
         path = self.uploader.log_dir
