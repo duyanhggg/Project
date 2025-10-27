@@ -10,13 +10,13 @@ import string
 from infi.systray import SysTrayIcon
 import sys
 
-# Biến toàn cục
+# Global variables
 is_enabled = True
 current_drive = "D:\\"
 observer = None
 systray = None
 
-# Bản đồ phần mở rộng file
+# File extension -> folder mapping
 ext_to_type = {
     "png": "Images",
     "jpg": "Images",
@@ -39,13 +39,13 @@ ext_to_type = {
     "img": "DiskImages",
 }
 
-# Thiết lập logging
+# Setup logging
 def setup_logging(drive):
     log_dir = os.path.join(drive, "Logs")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "auto_sorter.log")
     
-    # Xóa handlers cũ
+    # Remove old handlers
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
     
@@ -75,7 +75,7 @@ def move_file(file_path, source):
         os.makedirs(dest_path, exist_ok=True)
         try:
             shutil.move(file_path, os.path.join(dest_path, os.path.basename(file_path)))
-            msg = f"File '{os.path.basename(file_path)}' -> '{folder}'"
+            msg = f"Moved '{os.path.basename(file_path)}' to '{folder}'"
             logging.info(msg)
             notification.notify(
                 title="AutoSorter",
@@ -84,7 +84,7 @@ def move_file(file_path, source):
                 timeout=3
             )
         except Exception as e:
-            logging.error(f"Error when moving files '{file_path}': {e}")
+            logging.error(f"Error when moving file '{file_path}': {e}")
 
 class Handler(FileSystemEventHandler):
     """Handle events when new files are created"""
@@ -94,7 +94,7 @@ class Handler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
             time.sleep(10)
-            msg = f"New file detection: {os.path.basename(event.src_path)}"
+            msg = f"New file detected: {os.path.basename(event.src_path)}"
             logging.info(msg)
             notification.notify(
                 title="AutoSorter",
@@ -108,7 +108,7 @@ def start_observer(drive):
     """Start the observer for the selected drive"""
     global observer, current_drive
     
-    # Dừng observer cũ nếu có
+    # Stop any previous observer if running
     if observer and observer.is_alive():
         observer.stop()
         observer.join()
@@ -116,13 +116,13 @@ def start_observer(drive):
     current_drive = drive
     setup_logging(drive)
     
-    # Sắp xếp file có sẵn
+    # Sort existing files on the drive
     for file in os.listdir(drive):
         file_path = os.path.join(drive, file)
         if os.path.isfile(file_path):
             move_file(file_path, drive)
     
-    # Khởi động observer mới
+    # Start a new observer for the drive
     event_handler = Handler(drive)
     observer = Observer()
     observer.schedule(event_handler, drive, recursive=False)
@@ -137,7 +137,7 @@ def start_observer(drive):
         timeout=3
     )
     
-    # Cập nhật systray
+    # Update systray menu
     update_systray()
 
 def on_quit(systray):
@@ -226,15 +226,15 @@ def add_to_startup():
 if __name__ == "__main__":
     add_to_startup()
     
-    # Khởi động với ổ đĩa mặc định
+    # Start with the default drive
     start_observer(current_drive)
     
-    print(f"Watch the drive {current_drive}...")
+    print(f"Watching drive {current_drive}...")
     
-    # Tạo icon (có thể thay bằng icon file .ico của bạn)
-    icon_path = "images.ico"  # Để None sẽ dùng icon mặc định
+    # Icon path (replace with your .ico if desired)
+    icon_path = "images.ico"  # If None, a default icon is used
     
-    # Khởi động systray
+    # Start the system tray icon
     systray = SysTrayIcon(
         icon_path,
         f"AutoSorter - {current_drive}",
