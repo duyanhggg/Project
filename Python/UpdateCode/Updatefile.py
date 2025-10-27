@@ -15,6 +15,7 @@ import threading
 import logging
 from datetime import datetime
 from pathlib import Path
+from infi.systray import SysTrayIcon
 
 class GitHubUploader:
     def __init__(self):
@@ -1356,7 +1357,27 @@ class GitHubUploader:
             upload_count = 0
             self.logger.info(f"Background loop bắt đầu - mỗi {interval_minutes} phút")
             self._write_bg_status('start')
-            while True:
+            # Prepare stop event for tray control
+            try:
+                self._bg_stop_event = threading.Event()
+            except Exception:
+                self._bg_stop_event = None
+
+            # Try to create a system tray icon on Windows so the background process is visible and controllable
+            systray = None
+            try:
+                if os.name == 'nt':
+                    icon_path = None
+                    menu_options = (
+                        ("Open GUI", None, lambda s: self._open_gui_from_tray()),
+                        ("Stop background", None, lambda s: self._stop_from_tray(s)),
+                    )
+                    systray = SysTrayIcon(icon_path, "GitHub Auto Upload", menu_options, on_quit=self._stop_from_tray)
+                    systray.start()
+            except Exception:
+                self.logger.exception('Cannot start system tray icon for background mode')
+
+            while not (self._bg_stop_event and self._bg_stop_event.is_set()):
                 try:
                     timestamp = datetime.now().strftime('%H:%M:%S')
                     commit_msg = f"{commit_prefix} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1389,7 +1410,16 @@ class GitHubUploader:
                             msg = f"Failed to push {changed_count} file(s) to {self.branch}\n{file_list}{more}" if changed_count else f"Push failed to {self.branch}"
                             self.notify("GitHub Auto Upload", msg, duration=7)
                             self._write_bg_status('failure', f'#{upload_count}', upload_count)
-                    time.sleep(interval_minutes * 60)
+                    # sleep but wake early if stop requested
+                    slept = 0
+                    total = interval_minutes * 60
+                    while slept < total:
+                        if self._bg_stop_event and self._bg_stop_event.is_set():
+                            break
+                        time.sleep(1)
+                        slept += 1
+                    if self._bg_stop_event and self._bg_stop_event.is_set():
+                        break
                 except Exception as loop_e:
                     self.logger.exception(f"[BG] Lỗi vòng lặp: {loop_e}")
                     self._write_bg_status('failure', str(loop_e))
@@ -1397,7 +1427,39 @@ class GitHubUploader:
         except Exception as e:
             self.logger.exception(f"[BG] Lỗi khởi động: {e}")
             return 1
+        finally:
+            try:
+                if systray:
+                    systray.shutdown()
+            except Exception:
+                pass
         return 0
+
+    def _open_gui_from_tray(self):
+        try:
+            pythonw = sys.executable
+            if pythonw.lower().endswith('python.exe'):
+                maybe = pythonw[:-10] + 'pythonw.exe'
+                if os.path.exists(maybe):
+                    pythonw = maybe
+            script = os.path.abspath(os.path.join(os.path.dirname(__file__), 'run_update_gui.pyw'))
+            subprocess.Popen([pythonw, script], close_fds=True)
+        except Exception:
+            self.logger.exception('Failed to open GUI from tray')
+
+    def _stop_from_tray(self, systray=None):
+        try:
+            if hasattr(self, '_bg_stop_event') and self._bg_stop_event:
+                self._bg_stop_event.set()
+            self._write_bg_status('stopped')
+            self.logger.info('Background stop requested from tray')
+            if systray:
+                try:
+                    systray.shutdown()
+                except Exception:
+                    pass
+        except Exception:
+            self.logger.exception('Error while stopping from tray')
     
     def run(self):
         """Chạy chương trình chính"""

@@ -22,8 +22,8 @@ def safe_import_autoscript():
 class AutoSorterGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AutoSorter GUI')
-        self.geometry('700x420')
+        self.title('AutoSorter App')
+        self.geometry('1000x600')
 
         try:
             self.autos = safe_import_autoscript()

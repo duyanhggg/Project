@@ -17,7 +17,7 @@ def safe_import_uploader():
 class UpdateGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('GitHub Auto Upload - GUI')
+        self.title('GitHub Auto Upload')
         self.geometry('820x600')
 
         try:
@@ -58,9 +58,11 @@ class UpdateGUI(tk.Tk):
         self.prefix_entry.grid(column=3, row=2, sticky=tk.W, pady=(6, 0))
 
         # Buttons row 1
+        ttk.Button(frm, text='Load config', command=self.load_config).grid(column=0, row=3, pady=(10, 0), sticky=tk.W)
         ttk.Button(frm, text='Save config', command=self.save_config).grid(column=1, row=3, pady=(10, 0), sticky=tk.W)
-        ttk.Button(frm, text='Upload Now', command=self.upload_now).grid(column=2, row=3, pady=(10, 0))
-        ttk.Button(frm, text='Show Logs', command=self.open_logs).grid(column=3, row=3, pady=(10, 0))
+        ttk.Button(frm, text='Reset config', command=self.reset_config).grid(column=2, row=3, pady=(10, 0), sticky=tk.W)
+        ttk.Button(frm, text='Upload Now', command=self.upload_now).grid(column=3, row=3, pady=(10, 0))
+        ttk.Button(frm, text='Show Logs', command=self.open_logs).grid(column=4, row=3, pady=(10, 0))
 
         # Buttons row 2 (background)
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(column=0, row=4, columnspan=5, sticky='ew', pady=8)
@@ -111,6 +113,53 @@ class UpdateGUI(tk.Tk):
             messagebox.showinfo('Saved', 'Configuration saved to disk')
         except Exception as e:
             messagebox.showerror('Error', f'Failed to save config: {e}')
+
+    def load_config(self):
+        """Load the saved GUI config (key 'gui_saved') from uploader.config and populate fields."""
+        try:
+            cfg = self.uploader.config.get('gui_saved') if isinstance(self.uploader.config, dict) else None
+            if not cfg:
+                messagebox.showinfo('Load config', 'No saved GUI configuration found.')
+                return
+            self.repo_var.set(cfg.get('path') or '')
+            self.url_var.set(cfg.get('url') or '')
+            self.branch_var.set(cfg.get('branch') or 'main')
+            self.interval_var.set(cfg.get('interval') or 10)
+            self.prefix_var.set(cfg.get('prefix') or 'Auto update')
+            # Also update uploader in-memory
+            self.uploader.repo_path = self.repo_var.get().strip() or None
+            self.uploader.repo_url = self.url_var.get().strip() or None
+            self.uploader.branch = self.branch_var.get().strip() or 'main'
+            self.uploader.auto_upload_interval = int(self.interval_var.get() or 10)
+            self.uploader.auto_upload_prefix = self.prefix_var.get().strip() or 'Auto update'
+            messagebox.showinfo('Load config', 'Configuration loaded into the GUI.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load config: {e}')
+
+    def reset_config(self):
+        """Remove saved GUI config from uploader.config (reset to defaults)."""
+        try:
+            ok = messagebox.askyesno('Reset config', 'Are you sure you want to remove the saved GUI configuration?')
+            if not ok:
+                return
+            if isinstance(self.uploader.config, dict) and 'gui_saved' in self.uploader.config:
+                del self.uploader.config['gui_saved']
+                self.uploader.save_config()
+            # Clear GUI fields
+            self.repo_var.set('')
+            self.url_var.set('')
+            self.branch_var.set('main')
+            self.interval_var.set(10)
+            self.prefix_var.set('Auto update')
+            # Update uploader memory
+            self.uploader.repo_path = None
+            self.uploader.repo_url = None
+            self.uploader.branch = 'main'
+            self.uploader.auto_upload_interval = None
+            self.uploader.auto_upload_prefix = None
+            messagebox.showinfo('Reset config', 'Saved configuration removed and GUI reset.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to reset config: {e}')
 
     def upload_now(self):
         # Run a non-interactive upload using current fields
