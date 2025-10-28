@@ -349,26 +349,112 @@ class GitHubUploader:
 
     # Placeholders for menu items not wired into this minimal GUI
     def manage_saved_configs(self):
-        # Simple dialog-based editor
         try:
-            # Choose repo path
-            path = filedialog.askdirectory(title='Chọn thư mục repository', initialdir=self.repo_path)
-            if path:
-                self.repo_path = path
-            url = simpledialog.askstring("Repository URL", "Nhập URL GitHub (https hoặc ssh):", initialvalue=self.repo_url or "")
-            if url:
-                self.repo_url = url.strip()
-            branch = simpledialog.askstring("Branch", "Nhập tên branch:", initialvalue=self.branch)
-            if branch:
-                self.branch = branch.strip() or "main"
-            interval = simpledialog.askinteger("Interval", "Khoảng thời gian (phút):", initialvalue=self.auto_upload_interval, minvalue=1, maxvalue=1440)
-            if interval:
-                self.auto_upload_interval = int(interval)
-            prefix = simpledialog.askstring("Commit prefix", "Tiền tố commit:", initialvalue=self.auto_upload_prefix)
-            if prefix is not None:
-                self.auto_upload_prefix = prefix.strip() or "Auto update"
-            self.save_config()
-            messagebox.showinfo("Cấu hình", "Đã lưu cấu hình")
+            win = tk.Toplevel(self.root)
+            win.title("Quản lý cấu hình")
+            win.geometry("560x380")
+            frm = ttk.Frame(win, padding=12)
+            frm.pack(expand=True, fill='both')
+
+            # Profiles list
+            left = ttk.Frame(frm)
+            left.pack(side='left', fill='y', padx=(0, 12))
+            ttk.Label(left, text='Profiles:').pack(anchor='w')
+            lb = tk.Listbox(left, height=12)
+            lb.pack()
+
+            def refresh_list():
+                lb.delete(0, 'end')
+                for name in self.uploader.list_profiles():
+                    lb.insert('end', name)
+
+            # Edit panel
+            right = ttk.Frame(frm)
+            right.pack(side='left', expand=True, fill='both')
+            e_path = ttk.Entry(right, width=48)
+            e_url = ttk.Entry(right, width=48)
+            e_branch = ttk.Entry(right, width=20)
+            e_interval = ttk.Entry(right, width=10)
+            e_prefix = ttk.Entry(right, width=30)
+
+            def grid_row(r, label, widget):
+                ttk.Label(right, text=label+':').grid(column=0, row=r, sticky='w', pady=4)
+                widget.grid(column=1, row=r, sticky='w')
+            grid_row(0, 'Path', e_path)
+            grid_row(1, 'URL', e_url)
+            grid_row(2, 'Branch', e_branch)
+            grid_row(3, 'Interval (m)', e_interval)
+            grid_row(4, 'Prefix', e_prefix)
+
+            # Buttons
+            btns = ttk.Frame(right)
+            btns.grid(column=0, row=5, columnspan=2, pady=10, sticky='w')
+            def choose_path():
+                p = filedialog.askdirectory(title='Chọn thư mục repository', initialdir=e_path.get() or self.uploader.repo_path)
+                if p:
+                    e_path.delete(0, 'end'); e_path.insert(0, p)
+            ttk.Button(btns, text='Chọn thư mục', command=choose_path).pack(side='left')
+
+            def on_save_as():
+                name = simpledialog.askstring('Lưu cấu hình', 'Tên profile:')
+                if not name:
+                    return
+                prof = {
+                    'path': e_path.get().strip() or self.uploader.repo_path,
+                    'url': e_url.get().strip() or self.uploader.repo_url,
+                    'branch': e_branch.get().strip() or self.uploader.branch,
+                    'interval': int(e_interval.get().strip() or self.uploader.auto_upload_interval or 10),
+                    'prefix': e_prefix.get().strip() or self.uploader.auto_upload_prefix or 'Auto update',
+                }
+                self.uploader.save_profile(name, prof)
+                refresh_list()
+                messagebox.showinfo('Profile', f'Đã lưu profile "{name}"')
+            ttk.Button(btns, text='Lưu thành profile mới', command=on_save_as).pack(side='left', padx=8)
+
+            def on_load():
+                sel = lb.curselection()
+                if not sel:
+                    return
+                name = lb.get(sel[0])
+                prof = self.uploader.get_profile(name) or {}
+                e_path.delete(0, 'end'); e_path.insert(0, prof.get('path',''))
+                e_url.delete(0, 'end'); e_url.insert(0, prof.get('url',''))
+                e_branch.delete(0, 'end'); e_branch.insert(0, prof.get('branch',''))
+                e_interval.delete(0, 'end'); e_interval.insert(0, str(prof.get('interval','')))
+                e_prefix.delete(0, 'end'); e_prefix.insert(0, prof.get('prefix',''))
+            ttk.Button(btns, text='Tải từ profile đã chọn', command=on_load).pack(side='left', padx=8)
+
+            def on_apply_to_current():
+                # Apply to current and save
+                self.uploader.repo_path = e_path.get().strip() or self.uploader.repo_path
+                self.uploader.repo_url = e_url.get().strip() or self.uploader.repo_url
+                self.uploader.branch = e_branch.get().strip() or self.uploader.branch
+                try:
+                    self.uploader.auto_upload_interval = int(e_interval.get().strip() or self.uploader.auto_upload_interval)
+                except Exception:
+                    pass
+                self.uploader.auto_upload_prefix = e_prefix.get().strip() or self.uploader.auto_upload_prefix
+                self.uploader.save_config()
+                messagebox.showinfo('Cấu hình', 'Đã áp dụng vào cấu hình hiện tại')
+            ttk.Button(btns, text='Áp dụng vào cấu hình hiện tại', command=on_apply_to_current).pack(side='left', padx=8)
+
+            def on_delete():
+                sel = lb.curselection()
+                if not sel:
+                    return
+                name = lb.get(sel[0])
+                if self.uploader.delete_profile(name):
+                    refresh_list()
+                    messagebox.showinfo('Profile', f'Đã xoá "{name}"')
+            ttk.Button(btns, text='Xoá profile đã chọn', command=on_delete).pack(side='left', padx=8)
+
+            # Seed current config into editors
+            e_path.insert(0, self.uploader.repo_path or '')
+            e_url.insert(0, self.uploader.repo_url or '')
+            e_branch.insert(0, self.uploader.branch or '')
+            e_interval.insert(0, str(self.uploader.auto_upload_interval or 10))
+            e_prefix.insert(0, self.uploader.auto_upload_prefix or 'Auto update')
+            refresh_list()
         except Exception as e:
             messagebox.showerror("Cấu hình", str(e))
 
