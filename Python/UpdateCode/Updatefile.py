@@ -58,6 +58,7 @@ class GitHubUploader:
                 self.branch = data.get("branch", self.branch)
                 self.auto_upload_interval = int(data.get("interval", self.auto_upload_interval) or 10)
                 self.auto_upload_prefix = data.get("prefix", self.auto_upload_prefix) or "Auto update"
+                self._profiles = data.get("profiles", {}) if isinstance(data.get("profiles", {}), dict) else {}
         except Exception:
             # ignore config errors
             pass
@@ -70,11 +71,52 @@ class GitHubUploader:
                 "branch": self.branch,
                 "interval": self.auto_upload_interval,
                 "prefix": self.auto_upload_prefix,
+                "profiles": getattr(self, "_profiles", {}),
             }
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    # ------------- Saved profiles -------------
+    def list_profiles(self):
+        return sorted((getattr(self, "_profiles", {}) or {}).keys())
+
+    def get_profile(self, name: str):
+        return (getattr(self, "_profiles", {}) or {}).get(name)
+
+    def save_profile(self, name: str, profile: dict = None):
+        if not hasattr(self, "_profiles") or not isinstance(self._profiles, dict):
+            self._profiles = {}
+        if profile is None:
+            profile = {
+                "path": self.repo_path,
+                "url": self.repo_url,
+                "branch": self.branch,
+                "interval": self.auto_upload_interval,
+                "prefix": self.auto_upload_prefix,
+            }
+        self._profiles[name] = profile
+        self.save_config()
+
+    def delete_profile(self, name: str):
+        if hasattr(self, "_profiles") and isinstance(self._profiles, dict) and name in self._profiles:
+            del self._profiles[name]
+            self.save_config()
+            return True
+        return False
+    
+    def load_profile(self, name: str) -> bool:
+        prof = self.get_profile(name)
+        if not prof:
+            return False
+        self.repo_path = prof.get("path", self.repo_path)
+        self.repo_url = prof.get("url", self.repo_url)
+        self.branch = prof.get("branch", self.branch)
+        self.auto_upload_interval = int(prof.get("interval", self.auto_upload_interval) or 10)
+        self.auto_upload_prefix = prof.get("prefix", self.auto_upload_prefix) or "Auto update"
+        self.save_config()
+        return True
 
     def run_command(self, command: str):
         try:
@@ -357,6 +399,15 @@ class GitHubUploaderGUI:
         self.style.theme_use('clam')
         self.style.configure('TButton', font=('Segoe UI', 11), padding=8)
         self.style.configure('TLabel', font=('Segoe UI', 13))
+        # Taskbar/toast notifications (Windows)
+        self._toast_available = False
+        self._toaster = None
+        try:
+            from win10toast import ToastNotifier  # type: ignore
+            self._toaster = ToastNotifier()
+            self._toast_available = True
+        except Exception:
+            self._toast_available = False
         self.create_widgets()
 
     def create_widgets(self):
@@ -444,32 +495,71 @@ class GitHubUploaderGUI:
             win.geometry("520x320")
             container = ttk.Frame(win, padding=12)
             container.pack(expand=True, fill='both')
-            txt = tk.Text(container, height=12)
-            txt.pack(expand=True, fill='both')
+            # Header actions
+            actions = ttk.Frame(container)
+            actions.pack(fill='x', pady=(0, 8))
+            refresh_btn = ttk.Button(actions, text="Refresh")
+            refresh_btn.pack(side='left')
+            notify_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(actions, text='Notify on change', variable=notify_var).pack(side='left', padx=10)
 
-            def refresh():
+            # Grid of fields
+            grid = ttk.Frame(container)
+            grid.pack(expand=True, fill='both')
+            labels = {}
+            fields = [
+                ('PID', 'pid'),
+                ('Running', 'running'),
+                ('Last time', 'timestamp'),
+                ('Result', 'result'),
+                ('Message', 'message'),
+                ('Repository', 'path'),
+                ('Branch', 'branch'),
+                ('Interval (m)', 'interval'),
+                ('Prefix', 'prefix'),
+            ]
+            for i, (title, key) in enumerate(fields):
+                ttk.Label(grid, text=title+':', width=14).grid(column=0, row=i, sticky='w', pady=2)
+                val = ttk.Label(grid, text='')
+                val.grid(column=1, row=i, sticky='w', pady=2)
+                labels[key] = val
+
+            last_result = {'value': None}
+
+            def push_toast(title: str, msg: str):
+                if self._toast_available:
+                    try:
+                        self._toaster.show_toast(title, msg, duration=4, threaded=True)
+                    except Exception:
+                        pass
+
+            def do_refresh():
                 pid = self.uploader._read_bg_pid()
                 running = self.uploader.is_background_running()
                 st = self.uploader.read_status() or {}
-                lines = []
-                lines.append(f"PID: {pid}")
-                lines.append(f"Running: {running}")
-                if st:
-                    lines.append(f"Last: {st.get('timestamp')}")
-                    lines.append(f"Result: {st.get('result')}")
-                    msg = st.get('message') or ''
-                    if msg:
-                        lines.append(f"Message: {msg}")
-                    lines.append(f"Repo: {st.get('path')}")
-                    lines.append(f"Branch: {st.get('branch')}")
-                    lines.append(f"Interval: {st.get('interval')} minutes")
-                    lines.append(f"Prefix: {st.get('prefix')}")
-                else:
-                    lines.append("No status file yet")
-                txt.delete('1.0', 'end')
-                txt.insert('end', "\n".join(lines))
-                win.after(3000, refresh)
-            refresh()
+                # Update labels
+                labels['pid'].config(text=str(pid or ''))
+                labels['running'].config(text='Yes' if running else 'No')
+                labels['timestamp'].config(text=st.get('timestamp', ''))
+                labels['result'].config(text=st.get('result', ''))
+                labels['message'].config(text=st.get('message', ''))
+                labels['path'].config(text=st.get('path', ''))
+                labels['branch'].config(text=st.get('branch', ''))
+                labels['interval'].config(text=str(st.get('interval', '')))
+                labels['prefix'].config(text=st.get('prefix', ''))
+                # Notify on result change
+                res = st.get('result') if st else None
+                if notify_var.get() and res and res != last_result['value']:
+                    push_toast('Background status changed', f"{res} at {st.get('timestamp','')}")
+                last_result['value'] = res
+
+            def auto_refresh():
+                do_refresh()
+                win.after(3000, auto_refresh)
+
+            refresh_btn.config(command=do_refresh)
+            do_refresh()
+            auto_refresh()
         except Exception as e:
             messagebox.showerror("Background", str(e))
 
