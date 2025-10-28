@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from tkinter import simpledialog
 
 
 class GitHubUploader:
@@ -24,6 +25,56 @@ class GitHubUploader:
         self.repo_path = os.getcwd()
         self.repo_url = None
         self.branch = "main"
+        self.auto_upload_interval = 10  # minutes
+        self.auto_upload_prefix = "Auto update"
+        self._auto_thread = None
+        self._auto_stop = threading.Event()
+        # Config file
+        self.config_path = os.path.join(Path.home(), ".github_uploader_config.json")
+        # Logs
+        self.log_dir = os.path.join(Path.home(), ".github_uploader_logs")
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.logger = logging.getLogger("github_uploader")
+        if not self.logger.handlers:
+            self.logger.setLevel(logging.INFO)
+            fh = logging.FileHandler(os.path.join(self.log_dir, "uploader.log"), encoding='utf-8')
+            fmt = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            fh.setFormatter(fmt)
+            self.logger.addHandler(fh)
+        self.load_config()
+        self.logger.info("Uploader initialized")
+        # Background process files
+        self.bg_pid_file = os.path.join(self.log_dir, "bg.pid")
+        self.bg_status_file = os.path.join(self.log_dir, "bg_status.json")
+
+    # ------------- Config persistence -------------
+    def load_config(self):
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.repo_path = data.get("path", self.repo_path)
+                self.repo_url = data.get("url", self.repo_url)
+                self.branch = data.get("branch", self.branch)
+                self.auto_upload_interval = int(data.get("interval", self.auto_upload_interval) or 10)
+                self.auto_upload_prefix = data.get("prefix", self.auto_upload_prefix) or "Auto update"
+        except Exception:
+            # ignore config errors
+            pass
+
+    def save_config(self):
+        try:
+            data = {
+                "path": self.repo_path,
+                "url": self.repo_url,
+                "branch": self.branch,
+                "interval": self.auto_upload_interval,
+                "prefix": self.auto_upload_prefix,
+            }
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def run_command(self, command: str):
         try:
@@ -35,8 +86,12 @@ class GitHubUploader:
                 encoding='utf-8',
                 errors='replace',
             )
-            return result.returncode == 0, (result.stdout or "").strip(), (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
+            self.logger.info(f"$ {command}\nstdout: {stdout}\nstderr: {stderr}")
+            return result.returncode == 0, stdout, stderr
         except Exception as e:
+            self.logger.exception(f"Command failed: {command}")
             return False, "", str(e)
 
     def _git(self, args: str):
@@ -48,6 +103,27 @@ class GitHubUploader:
             return True
         ok, _, _ = self._git("init")
         return ok
+
+    def configure_remote(self) -> bool:
+        self.init_git_repo()
+        if not self.repo_url:
+            # ask for URL
+            try:
+                url = simpledialog.askstring("Remote", "Nhập URL Git remote (origin):")
+            except Exception:
+                url = None
+            if not url:
+                messagebox.showerror("Remote", "Chưa có URL remote")
+                return False
+            self.repo_url = url.strip()
+        ok, _, _ = self._git("remote get-url origin")
+        if ok:
+            # update to ensure correct
+            self._git(f"remote set-url origin {self.repo_url}")
+        else:
+            self._git(f"remote add origin {self.repo_url}")
+        self.save_config()
+        return True
 
     def show_git_status(self):
         self.init_git_repo()
@@ -97,12 +173,165 @@ class GitHubUploader:
             messagebox.showerror("Git push", err or out or "Push failed")
         return ok
 
+    # ------------- Background auto-upload (in-process thread) -------------
+    def _auto_loop(self):
+        while not self._auto_stop.is_set():
+            try:
+                self.git_add_all()
+                ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                self.git_commit(f"{self.auto_upload_prefix} {ts}")
+                self.git_push()
+            except Exception:
+                pass
+            # wait minutes in 1-second steps so we can stop promptly
+            total = max(1, int(self.auto_upload_interval) * 60)
+            for _ in range(total):
+                if self._auto_stop.is_set():
+                    break
+                time.sleep(1)
+
+    def start_background_mode(self) -> bool:
+        # Spawn a detached background process that runs --run-background
+        if self.is_background_running():
+            messagebox.showinfo("Background", "Đã chạy nền")
+            return True
+        if not self.configure_remote():
+            return False
+        self.save_config()
+        try:
+            cmd = f'"{sys.executable}" "{os.path.abspath(__file__)}" --run-background'
+            creationflags = 0
+            startupinfo = None
+            if sys.platform.startswith('win'):
+                # CREATE_NO_WINDOW = 0x08000000
+                creationflags = 0x08000000
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags, startupinfo=startupinfo)
+            # Store PID
+            with open(self.bg_pid_file, 'w', encoding='utf-8') as f:
+                f.write(str(proc.pid))
+            messagebox.showinfo("Background", "Đã bật chạy nền (tiến trình tách biệt)")
+            return True
+        except Exception as e:
+            messagebox.showerror("Background", f"Không thể khởi chạy nền: {e}")
+            return False
+
+    def stop_background_mode(self) -> bool:
+        pid = self._read_bg_pid()
+        if not pid:
+            return False
+        try:
+            if sys.platform.startswith('win'):
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.kill(pid, 15)
+            return True
+        except Exception:
+            return False
+
+    # -------- Detached background helpers --------
+    def _read_bg_pid(self):
+        try:
+            if os.path.exists(self.bg_pid_file):
+                with open(self.bg_pid_file, 'r', encoding='utf-8') as f:
+                    return int((f.read() or '').strip() or '0') or None
+        except Exception:
+            return None
+        return None
+
+    def is_background_running(self) -> bool:
+        pid = self._read_bg_pid()
+        if not pid:
+            return False
+        try:
+            if sys.platform.startswith('win'):
+                out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True)
+                return str(pid) in out.stdout
+            else:
+                os.kill(pid, 0)
+                return True
+        except Exception:
+            return False
+
+    def _write_status(self, result: str, message: str = ""):
+        try:
+            data = {
+                "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "result": result,
+                "message": message,
+                "path": self.repo_path,
+                "branch": self.branch,
+                "interval": self.auto_upload_interval,
+                "prefix": self.auto_upload_prefix,
+            }
+            with open(self.bg_status_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def read_status(self):
+        try:
+            if os.path.exists(self.bg_status_file):
+                with open(self.bg_status_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception:
+            return None
+        return None
+
+    # -------- Background loop entrypoint (detached) --------
+    def run_background_loop(self):
+        # Write own PID
+        try:
+            with open(self.bg_pid_file, 'w', encoding='utf-8') as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
+        self._write_status('start', 'Background loop started')
+        while True:
+            try:
+                self.load_config()  # refresh config if changed
+                self.git_add_all()
+                ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                committed = self.git_commit(f"{self.auto_upload_prefix} {ts}")
+                pushed = self.git_push()
+                if pushed:
+                    self._write_status('success', 'Pushed successfully')
+                elif committed:
+                    self._write_status('nochange', 'Nothing to push')
+                else:
+                    self._write_status('nochange', 'Nothing to commit')
+            except Exception as e:
+                self._write_status('failure', str(e))
+            # sleep until next run
+            interval_sec = max(60, int(self.auto_upload_interval) * 60)
+            time.sleep(interval_sec)
+
     # Placeholders for menu items not wired into this minimal GUI
     def manage_saved_configs(self):
-        messagebox.showinfo("Configs", "This simplified GUI does not support saved configs yet.")
+        # Simple dialog-based editor
+        try:
+            # Choose repo path
+            path = filedialog.askdirectory(title='Chọn thư mục repository', initialdir=self.repo_path)
+            if path:
+                self.repo_path = path
+            url = simpledialog.askstring("Repository URL", "Nhập URL GitHub (https hoặc ssh):", initialvalue=self.repo_url or "")
+            if url:
+                self.repo_url = url.strip()
+            branch = simpledialog.askstring("Branch", "Nhập tên branch:", initialvalue=self.branch)
+            if branch:
+                self.branch = branch.strip() or "main"
+            interval = simpledialog.askinteger("Interval", "Khoảng thời gian (phút):", initialvalue=self.auto_upload_interval, minvalue=1, maxvalue=1440)
+            if interval:
+                self.auto_upload_interval = int(interval)
+            prefix = simpledialog.askstring("Commit prefix", "Tiền tố commit:", initialvalue=self.auto_upload_prefix)
+            if prefix is not None:
+                self.auto_upload_prefix = prefix.strip() or "Auto update"
+            self.save_config()
+            messagebox.showinfo("Cấu hình", "Đã lưu cấu hình")
+        except Exception as e:
+            messagebox.showerror("Cấu hình", str(e))
 
     def start_auto_upload(self):
-        messagebox.showinfo("Auto Upload", "Background auto-upload not implemented in this minimal GUI.")
+        self.start_background_mode()
 
     def view_logs(self):
         log_dir = os.path.join(Path.home(), ".github_uploader_logs")
@@ -138,10 +367,14 @@ class GitHubUploaderGUI:
         ttk.Label(frame, text="GitHub Auto Upload Tool Pro", style='TLabel').pack(pady=(0, 12))
 
         ttk.Button(frame, text="[UPLOAD] Upload code lên GitHub", image=logo, compound='left', command=self.upload_code).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[STATUS] Xem trạng thái Git", image=logo, compound='left', command=self.show_git_status).pack(fill='x', pady=6)
+        ttk.Button(frame, text="[GIT STATUS] Xem trạng thái Git", image=logo, compound='left', command=self.show_git_status).pack(fill='x', pady=6)
         ttk.Button(frame, text="[EDIT] Tạo/Sửa .gitignore", image=logo, compound='left', command=self.create_gitignore).pack(fill='x', pady=6)
         ttk.Button(frame, text="[CONFIG] Quản lý cấu hình đã lưu", image=logo, compound='left', command=self.manage_saved_configs).pack(fill='x', pady=6)
         ttk.Button(frame, text="[TIME] Cấu hình tự động upload", image=logo, compound='left', command=self.configure_auto_upload).pack(fill='x', pady=6)
+        # Background controls
+        ttk.Button(frame, text="[BG START] Bật chạy nền (tiến trình tách biệt)", image=logo, compound='left', command=self.start_background_gui).pack(fill='x', pady=6)
+        ttk.Button(frame, text="[BG STOP] Dừng chạy nền", image=logo, compound='left', command=self.stop_background_gui).pack(fill='x', pady=6)
+        ttk.Button(frame, text="[BG STATUS] Trạng thái nền", image=logo, compound='left', command=self.show_bg_status_window).pack(fill='x', pady=6)
         ttk.Button(frame, text="[LOG] Xem logs", image=logo, compound='left', command=self.view_logs).pack(fill='x', pady=6)
         ttk.Button(frame, text="[EXIT] Thoát", image=logo, compound='left', command=self.root.quit).pack(fill='x', pady=6)
 
@@ -186,6 +419,59 @@ class GitHubUploaderGUI:
             self.uploader.view_logs()
         except Exception as e:
             messagebox.showerror("Lỗi", str(e))
+    
+    # -------- Background controls (GUI) --------
+    def start_background_gui(self):
+        try:
+            self.uploader.start_background_mode()
+        except Exception as e:
+            messagebox.showerror("Background", str(e))
+
+    def stop_background_gui(self):
+        try:
+            ok = self.uploader.stop_background_mode()
+            if ok:
+                messagebox.showinfo("Background", "Đã gửi yêu cầu dừng")
+            else:
+                messagebox.showinfo("Background", "Không tìm thấy tiến trình nền")
+        except Exception as e:
+            messagebox.showerror("Background", str(e))
+
+    def show_bg_status_window(self):
+        try:
+            win = tk.Toplevel(self.root)
+            win.title("Trạng thái chạy nền")
+            win.geometry("520x320")
+            container = ttk.Frame(win, padding=12)
+            container.pack(expand=True, fill='both')
+            txt = tk.Text(container, height=12)
+            txt.pack(expand=True, fill='both')
+
+            def refresh():
+                pid = self.uploader._read_bg_pid()
+                running = self.uploader.is_background_running()
+                st = self.uploader.read_status() or {}
+                lines = []
+                lines.append(f"PID: {pid}")
+                lines.append(f"Running: {running}")
+                if st:
+                    lines.append(f"Last: {st.get('timestamp')}")
+                    lines.append(f"Result: {st.get('result')}")
+                    msg = st.get('message') or ''
+                    if msg:
+                        lines.append(f"Message: {msg}")
+                    lines.append(f"Repo: {st.get('path')}")
+                    lines.append(f"Branch: {st.get('branch')}")
+                    lines.append(f"Interval: {st.get('interval')} minutes")
+                    lines.append(f"Prefix: {st.get('prefix')}")
+                else:
+                    lines.append("No status file yet")
+                txt.delete('1.0', 'end')
+                txt.insert('end', "\n".join(lines))
+                win.after(3000, refresh)
+            refresh()
+        except Exception as e:
+            messagebox.showerror("Background", str(e))
 
     def run(self):
         self.root.mainloop()
@@ -193,5 +479,9 @@ class GitHubUploaderGUI:
 if __name__ == "__main__":
     import sys, os, subprocess, logging
     uploader = GitHubUploader()
-    gui = GitHubUploaderGUI(uploader)
-    gui.run()
+    if '--run-background' in sys.argv:
+        # Detached background entrypoint
+        uploader.run_background_loop()
+    else:
+        gui = GitHubUploaderGUI(uploader)
+        gui.run()
