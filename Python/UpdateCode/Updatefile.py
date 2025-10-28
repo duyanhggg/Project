@@ -293,7 +293,7 @@ class GitHubUploader:
                 return True
         except Exception:
             return False
-
+    
     def _write_status(self, result: str, message: str = ""):
         try:
             data = {
@@ -350,114 +350,175 @@ class GitHubUploader:
     # Placeholders for menu items not wired into this minimal GUI
     def manage_saved_configs(self):
         try:
-            win = tk.Toplevel(self.root)
+            win = tk.Toplevel()
             win.title("Quản lý cấu hình")
-            win.geometry("560x380")
-            frm = ttk.Frame(win, padding=12)
-            frm.pack(expand=True, fill='both')
+            win.geometry("700x450")
+            win.configure(bg='#1e1e1e')
+            
+            # Main container with modern styling
+            main_frame = tk.Frame(win, bg='#1e1e1e')
+            main_frame.pack(expand=True, fill='both', padx=20, pady=20)
 
-            # Profiles list
-            left = ttk.Frame(frm)
-            left.pack(side='left', fill='y', padx=(0, 12))
-            ttk.Label(left, text='Profiles:').pack(anchor='w')
-            lb = tk.Listbox(left, height=12)
-            lb.pack()
+            # Title
+            title_label = tk.Label(main_frame, text="⚙️ Quản Lý Profiles", 
+                                   font=('Segoe UI', 16, 'bold'), 
+                                   bg='#1e1e1e', fg='#ffffff')
+            title_label.pack(pady=(0, 20))
+
+            # Content frame
+            content_frame = tk.Frame(main_frame, bg='#1e1e1e')
+            content_frame.pack(expand=True, fill='both')
+
+            # Left panel - Profiles list
+            left_panel = tk.Frame(content_frame, bg='#2d2d2d', relief='flat', bd=0)
+            left_panel.pack(side='left', fill='both', padx=(0, 15), pady=0)
+            left_panel.config(width=200)
+
+            tk.Label(left_panel, text='📋 Profiles', font=('Segoe UI', 11, 'bold'),
+                    bg='#2d2d2d', fg='#ffffff').pack(anchor='w', padx=10, pady=(10, 5))
+            
+            lb = tk.Listbox(left_panel, height=15, bg='#2d2d2d', fg='#ffffff',
+                           selectbackground='#0078d4', selectforeground='#ffffff',
+                           font=('Segoe UI', 10), relief='flat', bd=0,
+                           highlightthickness=1, highlightbackground='#3d3d3d')
+            lb.pack(padx=10, pady=(0, 10), fill='both', expand=True)
 
             def refresh_list():
                 lb.delete(0, 'end')
-                for name in self.uploader.list_profiles():
-                    lb.insert('end', name)
+                for name in self.list_profiles():
+                    lb.insert('end', f"  {name}")
 
-            # Edit panel
-            right = ttk.Frame(frm)
-            right.pack(side='left', expand=True, fill='both')
-            e_path = ttk.Entry(right, width=48)
-            e_url = ttk.Entry(right, width=48)
-            e_branch = ttk.Entry(right, width=20)
-            e_interval = ttk.Entry(right, width=10)
-            e_prefix = ttk.Entry(right, width=30)
+            # Right panel - Edit form
+            right_panel = tk.Frame(content_frame, bg='#2d2d2d', relief='flat', bd=0)
+            right_panel.pack(side='left', fill='both', expand=True)
 
-            def grid_row(r, label, widget):
-                ttk.Label(right, text=label+':').grid(column=0, row=r, sticky='w', pady=4)
-                widget.grid(column=1, row=r, sticky='w')
-            grid_row(0, 'Path', e_path)
-            grid_row(1, 'URL', e_url)
-            grid_row(2, 'Branch', e_branch)
-            grid_row(3, 'Interval (m)', e_interval)
-            grid_row(4, 'Prefix', e_prefix)
+            # Form fields with modern style
+            form_frame = tk.Frame(right_panel, bg='#2d2d2d')
+            form_frame.pack(padx=15, pady=15, fill='both', expand=True)
 
-            # Buttons
-            btns = ttk.Frame(right)
-            btns.grid(column=0, row=5, columnspan=2, pady=10, sticky='w')
+            entries = {}
+            fields = [
+                ('📁 Path', 'path', 40),
+                ('🔗 URL', 'url', 40),
+                ('🌿 Branch', 'branch', 20),
+                ('⏱️ Interval (min)', 'interval', 10),
+                ('✏️ Prefix', 'prefix', 30),
+            ]
+
+            for i, (label, key, width) in enumerate(fields):
+                field_frame = tk.Frame(form_frame, bg='#2d2d2d')
+                field_frame.pack(fill='x', pady=8)
+                
+                tk.Label(field_frame, text=label, font=('Segoe UI', 10),
+                        bg='#2d2d2d', fg='#cccccc', width=18, anchor='w').pack(side='left')
+                
+                entry = tk.Entry(field_frame, width=width, bg='#3d3d3d', fg='#ffffff',
+                               font=('Segoe UI', 10), relief='flat', bd=0,
+                               insertbackground='#ffffff')
+                entry.pack(side='left', padx=5, ipady=5)
+                entries[key] = entry
+
+            # Buttons with modern styling
+            button_frame = tk.Frame(right_panel, bg='#2d2d2d')
+            button_frame.pack(padx=15, pady=(0, 15), fill='x')
+
+            def create_modern_button(parent, text, command, bg_color='#0078d4'):
+                btn = tk.Button(parent, text=text, command=command,
+                              bg=bg_color, fg='#ffffff',
+                              font=('Segoe UI', 9, 'bold'),
+                              relief='flat', bd=0, padx=12, pady=6,
+                              cursor='hand2', activebackground='#005a9e',
+                              activeforeground='#ffffff')
+                return btn
+
+            btn_row1 = tk.Frame(button_frame, bg='#2d2d2d')
+            btn_row1.pack(fill='x', pady=3)
+            
             def choose_path():
-                p = filedialog.askdirectory(title='Chọn thư mục repository', initialdir=e_path.get() or self.uploader.repo_path)
+                p = filedialog.askdirectory(title='Chọn thư mục repository', 
+                                           initialdir=entries['path'].get() or self.repo_path)
                 if p:
-                    e_path.delete(0, 'end'); e_path.insert(0, p)
-            ttk.Button(btns, text='Chọn thư mục', command=choose_path).pack(side='left')
+                    entries['path'].delete(0, 'end')
+                    entries['path'].insert(0, p)
+            
+            create_modern_button(btn_row1, '📂 Chọn thư mục', choose_path, '#2d7d2d').pack(side='left', padx=2)
 
             def on_save_as():
                 name = simpledialog.askstring('Lưu cấu hình', 'Tên profile:')
                 if not name:
                     return
                 prof = {
-                    'path': e_path.get().strip() or self.uploader.repo_path,
-                    'url': e_url.get().strip() or self.uploader.repo_url,
-                    'branch': e_branch.get().strip() or self.uploader.branch,
-                    'interval': int(e_interval.get().strip() or self.uploader.auto_upload_interval or 10),
-                    'prefix': e_prefix.get().strip() or self.uploader.auto_upload_prefix or 'Auto update',
+                    'path': entries['path'].get().strip() or self.repo_path,
+                    'url': entries['url'].get().strip() or self.repo_url,
+                    'branch': entries['branch'].get().strip() or self.branch,
+                    'interval': int(entries['interval'].get().strip() or self.auto_upload_interval or 10),
+                    'prefix': entries['prefix'].get().strip() or self.auto_upload_prefix or 'Auto update',
                 }
-                self.uploader.save_profile(name, prof)
+                self.save_profile(name, prof)
                 refresh_list()
-                messagebox.showinfo('Profile', f'Đã lưu profile "{name}"')
-            ttk.Button(btns, text='Lưu thành profile mới', command=on_save_as).pack(side='left', padx=8)
+                messagebox.showinfo('✅ Success', f'Đã lưu profile "{name}"')
+            
+            create_modern_button(btn_row1, '💾 Lưu Profile', on_save_as, '#0078d4').pack(side='left', padx=2)
+
+            btn_row2 = tk.Frame(button_frame, bg='#2d2d2d')
+            btn_row2.pack(fill='x', pady=3)
 
             def on_load():
                 sel = lb.curselection()
                 if not sel:
                     return
-                name = lb.get(sel[0])
-                prof = self.uploader.get_profile(name) or {}
-                e_path.delete(0, 'end'); e_path.insert(0, prof.get('path',''))
-                e_url.delete(0, 'end'); e_url.insert(0, prof.get('url',''))
-                e_branch.delete(0, 'end'); e_branch.insert(0, prof.get('branch',''))
-                e_interval.delete(0, 'end'); e_interval.insert(0, str(prof.get('interval','')))
-                e_prefix.delete(0, 'end'); e_prefix.insert(0, prof.get('prefix',''))
-            ttk.Button(btns, text='Tải từ profile đã chọn', command=on_load).pack(side='left', padx=8)
+                name = lb.get(sel[0]).strip()
+                prof = self.get_profile(name) or {}
+                entries['path'].delete(0, 'end')
+                entries['path'].insert(0, prof.get('path',''))
+                entries['url'].delete(0, 'end')
+                entries['url'].insert(0, prof.get('url',''))
+                entries['branch'].delete(0, 'end')
+                entries['branch'].insert(0, prof.get('branch',''))
+                entries['interval'].delete(0, 'end')
+                entries['interval'].insert(0, str(prof.get('interval','')))
+                entries['prefix'].delete(0, 'end')
+                entries['prefix'].insert(0, prof.get('prefix',''))
+            
+            create_modern_button(btn_row2, '📥 Tải Profile', on_load, '#6d4c9d').pack(side='left', padx=2)
 
-            def on_apply_to_current():
-                # Apply to current and save
-                self.uploader.repo_path = e_path.get().strip() or self.uploader.repo_path
-                self.uploader.repo_url = e_url.get().strip() or self.uploader.repo_url
-                self.uploader.branch = e_branch.get().strip() or self.uploader.branch
+            def on_apply():
+                self.repo_path = entries['path'].get().strip() or self.repo_path
+                self.repo_url = entries['url'].get().strip() or self.repo_url
+                self.branch = entries['branch'].get().strip() or self.branch
                 try:
-                    self.uploader.auto_upload_interval = int(e_interval.get().strip() or self.uploader.auto_upload_interval)
+                    self.auto_upload_interval = int(entries['interval'].get().strip() or self.auto_upload_interval)
                 except Exception:
                     pass
-                self.uploader.auto_upload_prefix = e_prefix.get().strip() or self.uploader.auto_upload_prefix
-                self.uploader.save_config()
-                messagebox.showinfo('Cấu hình', 'Đã áp dụng vào cấu hình hiện tại')
-            ttk.Button(btns, text='Áp dụng vào cấu hình hiện tại', command=on_apply_to_current).pack(side='left', padx=8)
+                self.auto_upload_prefix = entries['prefix'].get().strip() or self.auto_upload_prefix
+                self.save_config()
+                messagebox.showinfo('✅ Success', 'Đã áp dụng cấu hình!')
+            
+            create_modern_button(btn_row2, '✅ Áp dụng', on_apply, '#2d7d2d').pack(side='left', padx=2)
 
             def on_delete():
                 sel = lb.curselection()
                 if not sel:
                     return
-                name = lb.get(sel[0])
-                if self.uploader.delete_profile(name):
-                    refresh_list()
-                    messagebox.showinfo('Profile', f'Đã xoá "{name}"')
-            ttk.Button(btns, text='Xoá profile đã chọn', command=on_delete).pack(side='left', padx=8)
+                name = lb.get(sel[0]).strip()
+                if messagebox.askyesno('Xác nhận', f'Xóa profile "{name}"?'):
+                    if self.delete_profile(name):
+                        refresh_list()
+                        messagebox.showinfo('✅ Success', f'Đã xóa "{name}"')
+            
+            create_modern_button(btn_row2, '🗑️ Xóa', on_delete, '#d42d2d').pack(side='left', padx=2)
 
-            # Seed current config into editors
-            e_path.insert(0, self.uploader.repo_path or '')
-            e_url.insert(0, self.uploader.repo_url or '')
-            e_branch.insert(0, self.uploader.branch or '')
-            e_interval.insert(0, str(self.uploader.auto_upload_interval or 10))
-            e_prefix.insert(0, self.uploader.auto_upload_prefix or 'Auto update')
+            # Load current config
+            entries['path'].insert(0, self.repo_path or '')
+            entries['url'].insert(0, self.repo_url or '')
+            entries['branch'].insert(0, self.branch or '')
+            entries['interval'].insert(0, str(self.auto_upload_interval or 10))
+            entries['prefix'].insert(0, self.auto_upload_prefix or 'Auto update')
             refresh_list()
+            
         except Exception as e:
-            messagebox.showerror("Cấu hình", str(e))
-
+            messagebox.showerror("❌ Lỗi", str(e))
+    
     def start_auto_upload(self):
         self.start_background_mode()
 
@@ -474,17 +535,30 @@ class GitHubUploader:
         except Exception as e:
             messagebox.showerror("Logs", f"Cannot open logs: {e}")
 
+
 class GitHubUploaderGUI:
     def __init__(self, uploader):
         self.uploader = uploader
         self.root = tk.Tk()
         self.root.title("GitHub Auto Upload Tool Pro")
-        self.root.geometry("420x420")
+        self.root.geometry("600x750")
         self.root.resizable(False, False)
-        self.style = ttk.Style(self.root)
-        self.style.theme_use('clam')
-        self.style.configure('TButton', font=('Segoe UI', 11), padding=8)
-        self.style.configure('TLabel', font=('Segoe UI', 13))
+        
+        # Modern dark theme colors
+        self.colors = {
+            'bg': '#1e1e1e',
+            'fg': '#ffffff',
+            'accent': '#0078d4',
+            'success': '#2d7d2d',
+            'warning': '#d49d2d',
+            'danger': '#d42d2d',
+            'card': '#2d2d2d',
+            'border': '#3d3d3d',
+            'text_secondary': '#cccccc'
+        }
+        
+        self.root.configure(bg=self.colors['bg'])
+        
         # Taskbar/toast notifications (Windows)
         self._toast_available = False
         self._toaster = None
@@ -494,120 +568,282 @@ class GitHubUploaderGUI:
             self._toast_available = True
         except Exception:
             self._toast_available = False
+        
         self.create_widgets()
 
+    def create_modern_button(self, parent, text, command, icon='', color_key='accent'):
+        """Create a modern styled button"""
+        btn_frame = tk.Frame(parent, bg=self.colors['card'], highlightthickness=1, 
+                            highlightbackground=self.colors['border'])
+        btn_frame.pack(fill='x', pady=5, padx=10)
+        
+        btn = tk.Button(btn_frame, text=f"{icon} {text}", command=command,
+                       bg=self.colors['card'], fg=self.colors['fg'],
+                       font=('Segoe UI', 11), relief='flat', bd=0,
+                       anchor='w', padx=20, pady=12, cursor='hand2')
+        btn.pack(fill='both', expand=True)
+        
+        # Hover effects
+        def on_enter(e):
+            btn.config(bg=self.colors[color_key])
+        
+        def on_leave(e):
+            btn.config(bg=self.colors['card'])
+        
+        btn.bind('<Enter>', on_enter)
+        btn.bind('<Leave>', on_leave)
+        
+        return btn
+
     def create_widgets(self):
-        frame = ttk.Frame(self.root, padding=20)
-        frame.pack(expand=True, fill='both')
+        # Header with gradient effect
+        header = tk.Frame(self.root, bg=self.colors['accent'], height=100)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        
+        tk.Label(header, text="⚡", font=('Segoe UI', 32), 
+                bg=self.colors['accent'], fg=self.colors['fg']).pack(pady=(15, 0))
+        tk.Label(header, text="GitHub Auto Upload Pro", 
+                font=('Segoe UI', 18, 'bold'), 
+                bg=self.colors['accent'], fg=self.colors['fg']).pack()
+        tk.Label(header, text="Tự động hóa việc đẩy code lên GitHub", 
+                font=('Segoe UI', 9), 
+                bg=self.colors['accent'], fg='#e0e0e0').pack(pady=(2, 0))
 
-        logo = tk.PhotoImage(width=1, height=1)  # Placeholder image
-        ttk.Label(frame, text="GitHub Auto Upload Tool Pro", style='TLabel').pack(pady=(0, 12))
+        # Main content area
+        main_frame = tk.Frame(self.root, bg=self.colors['bg'])
+        main_frame.pack(expand=True, fill='both', padx=20, pady=20)
 
-        ttk.Button(frame, text="[UPLOAD] Upload code lên GitHub", image=logo, compound='left', command=self.upload_code).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[GIT STATUS] Xem trạng thái Git", image=logo, compound='left', command=self.show_git_status).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[EDIT] Tạo/Sửa .gitignore", image=logo, compound='left', command=self.create_gitignore).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[CONFIG] Quản lý cấu hình đã lưu", image=logo, compound='left', command=self.manage_saved_configs).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[TIME] Cấu hình tự động upload", image=logo, compound='left', command=self.configure_auto_upload).pack(fill='x', pady=6)
-        # Background controls
-        ttk.Button(frame, text="[BG START] Bật chạy nền (tiến trình tách biệt)", image=logo, compound='left', command=self.start_background_gui).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[BG STOP] Dừng chạy nền", image=logo, compound='left', command=self.stop_background_gui).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[BG STATUS] Trạng thái nền", image=logo, compound='left', command=self.show_bg_status_window).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[LOG] Xem logs", image=logo, compound='left', command=self.view_logs).pack(fill='x', pady=6)
-        ttk.Button(frame, text="[EXIT] Thoát", image=logo, compound='left', command=self.root.quit).pack(fill='x', pady=6)
+        # Info card
+        info_card = tk.Frame(main_frame, bg=self.colors['card'], 
+                            highlightthickness=1, highlightbackground=self.colors['border'])
+        info_card.pack(fill='x', pady=(0, 15))
+        
+        info_content = tk.Frame(info_card, bg=self.colors['card'])
+        info_content.pack(padx=15, pady=12)
+        
+        repo_text = self.uploader.repo_path if self.uploader.repo_path else "Chưa cấu hình"
+        tk.Label(info_content, text=f"📁 Repository: {repo_text}", 
+                font=('Segoe UI', 9), bg=self.colors['card'], 
+                fg=self.colors['text_secondary'], anchor='w').pack(fill='x')
+        
+        branch_text = self.uploader.branch if self.uploader.branch else "main"
+        tk.Label(info_content, text=f"🌿 Branch: {branch_text}", 
+                font=('Segoe UI', 9), bg=self.colors['card'], 
+                fg=self.colors['text_secondary'], anchor='w').pack(fill='x')
+
+        # Section: Git Operations
+        section1 = tk.LabelFrame(main_frame, text=" 🔧 Git Operations ", 
+                                font=('Segoe UI', 11, 'bold'),
+                                bg=self.colors['bg'], fg=self.colors['fg'],
+                                relief='flat', bd=0)
+        section1.pack(fill='x', pady=(0, 10))
+
+        self.create_modern_button(section1, "Upload Code", self.upload_code, '🚀', 'success')
+        self.create_modern_button(section1, "Git Status", self.show_git_status, '📊', 'accent')
+        self.create_modern_button(section1, "Tạo/Sửa .gitignore", self.create_gitignore, '📝', 'accent')
+
+        # Section: Configuration
+        section2 = tk.LabelFrame(main_frame, text=" ⚙️ Configuration ", 
+                                font=('Segoe UI', 11, 'bold'),
+                                bg=self.colors['bg'], fg=self.colors['fg'],
+                                relief='flat', bd=0)
+        section2.pack(fill='x', pady=(0, 10))
+
+        self.create_modern_button(section2, "Quản lý Profiles", self.manage_saved_configs, '💾', 'accent')
+        self.create_modern_button(section2, "Cấu hình Auto Upload", self.configure_auto_upload, '⏰', 'warning')
+
+        # Section: Background Mode
+        section3 = tk.LabelFrame(main_frame, text=" 🔄 Background Mode ", 
+                                font=('Segoe UI', 11, 'bold'),
+                                bg=self.colors['bg'], fg=self.colors['fg'],
+                                relief='flat', bd=0)
+        section3.pack(fill='x', pady=(0, 10))
+
+        self.create_modern_button(section3, "Bật chạy nền", self.start_background_gui, '▶️', 'success')
+        self.create_modern_button(section3, "Dừng chạy nền", self.stop_background_gui, '⏸️', 'danger')
+        self.create_modern_button(section3, "Trạng thái nền", self.show_bg_status_window, '📡', 'accent')
+
+        # Section: Utilities
+        section4 = tk.LabelFrame(main_frame, text=" 🛠️ Utilities ", 
+                                font=('Segoe UI', 11, 'bold'),
+                                bg=self.colors['bg'], fg=self.colors['fg'],
+                                relief='flat', bd=0)
+        section4.pack(fill='x', pady=(0, 10))
+
+        self.create_modern_button(section4, "Xem Logs", self.view_logs, '📄', 'accent')
+        self.create_modern_button(section4, "Thoát", self.root.quit, '🚪', 'danger')
 
         # Footer
-        ttk.Label(frame, text="© 2025 by GitHub Auto Upload Team", font=('Segoe UI', 9)).pack(side='bottom', pady=(18,0))
+        footer = tk.Frame(self.root, bg=self.colors['bg'])
+        footer.pack(side='bottom', fill='x', pady=(0, 10))
+        
+        tk.Label(footer, text="© 2025 GitHub Auto Upload Team • Made with ❤️", 
+                font=('Segoe UI', 8), bg=self.colors['bg'], 
+                fg=self.colors['text_secondary']).pack()
 
     def upload_code(self):
         try:
-            self.uploader.git_add_all()
-            self.uploader.git_commit("Upload từ GUI")
-            self.uploader.git_push()
-            messagebox.showinfo("Thành công", "Đã upload code lên GitHub!")
+            # Show progress window
+            progress_win = tk.Toplevel(self.root)
+            progress_win.title("Uploading...")
+            progress_win.geometry("400x150")
+            progress_win.configure(bg=self.colors['bg'])
+            progress_win.transient(self.root)
+            progress_win.grab_set()
+            
+            tk.Label(progress_win, text="⏳ Đang upload code...", 
+                    font=('Segoe UI', 12, 'bold'),
+                    bg=self.colors['bg'], fg=self.colors['fg']).pack(pady=20)
+            
+            status_label = tk.Label(progress_win, text="Đang thực hiện git add...",
+                                   font=('Segoe UI', 10),
+                                   bg=self.colors['bg'], fg=self.colors['text_secondary'])
+            status_label.pack()
+            
+            def do_upload():
+                try:
+                    status_label.config(text="📦 Git add...")
+                    self.uploader.git_add_all()
+                    
+                    status_label.config(text="💬 Git commit...")
+                    self.uploader.git_commit("Upload từ GUI")
+                    
+                    status_label.config(text="🚀 Git push...")
+                    self.uploader.git_push()
+                    
+                    progress_win.destroy()
+                    messagebox.showinfo("✅ Thành công", "Đã upload code lên GitHub!")
+                except Exception as e:
+                    progress_win.destroy()
+                    messagebox.showerror("❌ Lỗi", str(e))
+            
+            self.root.after(100, do_upload)
+            
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
-
+            messagebox.showerror("❌ Lỗi", str(e))
+    
     def show_git_status(self):
         try:
             self.uploader.show_git_status()
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
+            messagebox.showerror("❌ Lỗi", str(e))
 
     def create_gitignore(self):
         try:
             self.uploader.create_gitignore()
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
-
+            messagebox.showerror("❌ Lỗi", str(e))
+    
     def manage_saved_configs(self):
         try:
             self.uploader.manage_saved_configs()
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
+            messagebox.showerror("❌ Lỗi", str(e))
 
     def configure_auto_upload(self):
         try:
             self.uploader.start_auto_upload()
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
+            messagebox.showerror("❌ Lỗi", str(e))
 
     def view_logs(self):
         try:
             self.uploader.view_logs()
         except Exception as e:
-            messagebox.showerror("Lỗi", str(e))
+            messagebox.showerror("❌ Lỗi", str(e))
     
     # -------- Background controls (GUI) --------
     def start_background_gui(self):
         try:
             self.uploader.start_background_mode()
         except Exception as e:
-            messagebox.showerror("Background", str(e))
+            messagebox.showerror("❌ Background", str(e))
 
     def stop_background_gui(self):
         try:
             ok = self.uploader.stop_background_mode()
             if ok:
-                messagebox.showinfo("Background", "Đã gửi yêu cầu dừng")
+                messagebox.showinfo("✅ Background", "Đã gửi yêu cầu dừng")
             else:
-                messagebox.showinfo("Background", "Không tìm thấy tiến trình nền")
+                messagebox.showinfo("ℹ️ Background", "Không tìm thấy tiến trình nền")
         except Exception as e:
-            messagebox.showerror("Background", str(e))
+            messagebox.showerror("❌ Background", str(e))
 
     def show_bg_status_window(self):
         try:
             win = tk.Toplevel(self.root)
             win.title("Trạng thái chạy nền")
-            win.geometry("520x320")
-            container = ttk.Frame(win, padding=12)
-            container.pack(expand=True, fill='both')
-            # Header actions
-            actions = ttk.Frame(container)
-            actions.pack(fill='x', pady=(0, 8))
-            refresh_btn = ttk.Button(actions, text="Refresh")
+            win.geometry("650x450")
+            win.configure(bg=self.colors['bg'])
+            
+            # Header
+            header = tk.Frame(win, bg=self.colors['accent'], height=60)
+            header.pack(fill='x')
+            header.pack_propagate(False)
+            
+            tk.Label(header, text="📡 Trạng thái Background Service", 
+                    font=('Segoe UI', 14, 'bold'),
+                    bg=self.colors['accent'], fg=self.colors['fg']).pack(pady=15)
+            
+            # Main container
+            container = tk.Frame(win, bg=self.colors['bg'])
+            container.pack(expand=True, fill='both', padx=20, pady=20)
+            
+            # Actions bar
+            actions = tk.Frame(container, bg=self.colors['card'],
+                             highlightthickness=1, highlightbackground=self.colors['border'])
+            actions.pack(fill='x', pady=(0, 15))
+            
+            actions_inner = tk.Frame(actions, bg=self.colors['card'])
+            actions_inner.pack(padx=10, pady=10, fill='x')
+            
+            refresh_btn = tk.Button(actions_inner, text="🔄 Refresh", 
+                                   bg=self.colors['accent'], fg=self.colors['fg'],
+                                   font=('Segoe UI', 9, 'bold'), relief='flat',
+                                   padx=15, pady=5, cursor='hand2')
             refresh_btn.pack(side='left')
+            
             notify_var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(actions, text='Notify on change', variable=notify_var).pack(side='left', padx=10)
+            tk.Checkbutton(actions_inner, text='🔔 Thông báo khi có thay đổi', 
+                          variable=notify_var, bg=self.colors['card'],
+                          fg=self.colors['text_secondary'], font=('Segoe UI', 9),
+                          selectcolor=self.colors['bg'], activebackground=self.colors['card'],
+                          activeforeground=self.colors['fg']).pack(side='left', padx=15)
 
-            # Grid of fields
-            grid = ttk.Frame(container)
-            grid.pack(expand=True, fill='both')
+            # Status grid
+            grid_frame = tk.Frame(container, bg=self.colors['card'],
+                                 highlightthickness=1, highlightbackground=self.colors['border'])
+            grid_frame.pack(expand=True, fill='both')
+            
+            grid_inner = tk.Frame(grid_frame, bg=self.colors['card'])
+            grid_inner.pack(padx=20, pady=20, fill='both', expand=True)
+            
             labels = {}
             fields = [
-                ('PID', 'pid'),
-                ('Running', 'running'),
-                ('Last time', 'timestamp'),
-                ('Result', 'result'),
-                ('Message', 'message'),
-                ('Repository', 'path'),
-                ('Branch', 'branch'),
-                ('Interval (m)', 'interval'),
-                ('Prefix', 'prefix'),
+                ('🆔 PID', 'pid'),
+                ('▶️ Running', 'running'),
+                ('🕐 Last Update', 'timestamp'),
+                ('📊 Result', 'result'),
+                ('💬 Message', 'message'),
+                ('📁 Repository', 'path'),
+                ('🌿 Branch', 'branch'),
+                ('⏱️ Interval (min)', 'interval'),
+                ('✏️ Prefix', 'prefix'),
             ]
+            
             for i, (title, key) in enumerate(fields):
-                ttk.Label(grid, text=title+':', width=14).grid(column=0, row=i, sticky='w', pady=2)
-                val = ttk.Label(grid, text='')
-                val.grid(column=1, row=i, sticky='w', pady=2)
+                row_frame = tk.Frame(grid_inner, bg=self.colors['card'])
+                row_frame.pack(fill='x', pady=5)
+                
+                tk.Label(row_frame, text=title, font=('Segoe UI', 10),
+                        bg=self.colors['card'], fg=self.colors['text_secondary'],
+                        width=20, anchor='w').pack(side='left')
+                
+                val = tk.Label(row_frame, text='', font=('Segoe UI', 10, 'bold'),
+                              bg=self.colors['card'], fg=self.colors['fg'],
+                              anchor='w')
+                val.pack(side='left', fill='x', expand=True)
                 labels[key] = val
 
             last_result = {'value': None}
@@ -623,20 +859,36 @@ class GitHubUploaderGUI:
                 pid = self.uploader._read_bg_pid()
                 running = self.uploader.is_background_running()
                 st = self.uploader.read_status() or {}
-                # Update labels
-                labels['pid'].config(text=str(pid or ''))
-                labels['running'].config(text='Yes' if running else 'No')
-                labels['timestamp'].config(text=st.get('timestamp', ''))
-                labels['result'].config(text=st.get('result', ''))
-                labels['message'].config(text=st.get('message', ''))
-                labels['path'].config(text=st.get('path', ''))
-                labels['branch'].config(text=st.get('branch', ''))
-                labels['interval'].config(text=str(st.get('interval', '')))
-                labels['prefix'].config(text=st.get('prefix', ''))
+                
+                # Update labels with colors
+                labels['pid'].config(text=str(pid or 'N/A'))
+                
+                if running:
+                    labels['running'].config(text='✅ Yes', fg='#2d7d2d')
+                else:
+                    labels['running'].config(text='❌ No', fg='#d42d2d')
+                
+                labels['timestamp'].config(text=st.get('timestamp', 'N/A'))
+                
+                result = st.get('result', 'N/A')
+                if result == 'success':
+                    labels['result'].config(text=f'✅ {result}', fg='#2d7d2d')
+                elif result == 'failure':
+                    labels['result'].config(text=f'❌ {result}', fg='#d42d2d')
+                else:
+                    labels['result'].config(text=f'ℹ️ {result}', fg='#d49d2d')
+                
+                labels['message'].config(text=st.get('message', 'N/A'))
+                labels['path'].config(text=st.get('path', 'N/A'))
+                labels['branch'].config(text=st.get('branch', 'N/A'))
+                labels['interval'].config(text=str(st.get('interval', 'N/A')))
+                labels['prefix'].config(text=st.get('prefix', 'N/A'))
+                
                 # Notify on result change
                 res = st.get('result') if st else None
                 if notify_var.get() and res and res != last_result['value']:
-                    push_toast('Background status changed', f"{res} at {st.get('timestamp','')}")
+                    push_toast('🔔 Background status changed', 
+                             f"{res} at {st.get('timestamp','')}")
                 last_result['value'] = res
 
             def auto_refresh():
@@ -646,14 +898,15 @@ class GitHubUploaderGUI:
             refresh_btn.config(command=do_refresh)
             do_refresh()
             auto_refresh()
+            
         except Exception as e:
-            messagebox.showerror("Background", str(e))
+            messagebox.showerror("❌ Background", str(e))
 
     def run(self):
         self.root.mainloop()
 
+
 if __name__ == "__main__":
-    import sys, os, subprocess, logging
     uploader = GitHubUploader()
     if '--run-background' in sys.argv:
         # Detached background entrypoint
