@@ -1,7 +1,7 @@
 """
 Advanced Database Manager Pro
 Hỗ trợ: SQLite, MySQL, PostgreSQL, MongoDB
-Tính năng: GUI hiện đại, Filter nâng cao, Sort đa cấp, Export đa định dạng, SQL Editor
+Tính năng: GUI hiện đại, Filter nâng cao, Sort đa cấp, Export đa định dạng, SQL Editor, System Tray
 """
 
 import tkinter as tk
@@ -12,6 +12,9 @@ from typing import List, Dict, Optional, Any, Tuple
 import json
 from datetime import datetime
 import threading
+import pystray
+from PIL import Image, ImageDraw
+import sys
 
 # Import tùy chọn cho các database khác
 try:
@@ -71,7 +74,7 @@ class DatabaseConnector:
             elif self.db_type == 'mongodb' and MONGO_AVAILABLE:
                 uri = self.kwargs.get('uri', 'mongodb://localhost:27017/')
                 client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-                client.server_info()  # Test connection
+                client.server_info()
                 db_name = self.kwargs.get('database', 'test')
                 self.connection = client[db_name]
                 return True, "Kết nối MongoDB thành công"
@@ -234,19 +237,21 @@ class DatabaseConnector:
 
 
 class ModernStyle:
-    """Định nghĩa style hiện đại cho ứng dụng"""
+    """Định nghĩa style hiện đại cho ứng dụng - Dark Purple Theme"""
     
-    # Colors
-    BG_PRIMARY = "#1e1e2e"
-    BG_SECONDARY = "#2d2d44"
-    BG_TERTIARY = "#3d3d5c"
-    FG_PRIMARY = "#cdd6f4"
-    FG_SECONDARY = "#a6adc8"
-    ACCENT_BLUE = "#89b4fa"
-    ACCENT_GREEN = "#a6e3a1"
-    ACCENT_RED = "#f38ba8"
-    ACCENT_YELLOW = "#f9e2af"
-    ACCENT_PURPLE = "#cba6f7"
+    # Colors - Dark Purple Theme
+    BG_PRIMARY = "#0f0a1e"
+    BG_SECONDARY = "#1a1332"
+    BG_TERTIARY = "#2d1f4a"
+    FG_PRIMARY = "#e6e1f5"
+    FG_SECONDARY = "#b8a8d9"
+    ACCENT_PURPLE = "#9d4edd"
+    ACCENT_PINK = "#e0aaff"
+    ACCENT_BLUE = "#7209b7"
+    ACCENT_GREEN = "#06ffa5"
+    ACCENT_RED = "#ff006e"
+    ACCENT_ORANGE = "#ffbe0b"
+    ACCENT_CYAN = "#00f5ff"
     
     @staticmethod
     def apply_style():
@@ -265,16 +270,20 @@ class ModernStyle:
         
         # Frame
         style.configure('TFrame', background=ModernStyle.BG_PRIMARY)
-        style.configure('Card.TFrame', background=ModernStyle.BG_SECONDARY, relief='raised')
+        style.configure('Card.TFrame', 
+                       background=ModernStyle.BG_SECONDARY, 
+                       relief='flat',
+                       borderwidth=2)
         
         # LabelFrame
         style.configure('TLabelframe', 
                        background=ModernStyle.BG_PRIMARY,
-                       foreground=ModernStyle.ACCENT_BLUE,
-                       bordercolor=ModernStyle.ACCENT_BLUE)
+                       foreground=ModernStyle.ACCENT_PURPLE,
+                       bordercolor=ModernStyle.ACCENT_PURPLE,
+                       borderwidth=2)
         style.configure('TLabelframe.Label',
                        background=ModernStyle.BG_PRIMARY,
-                       foreground=ModernStyle.ACCENT_BLUE,
+                       foreground=ModernStyle.ACCENT_PINK,
                        font=('Segoe UI', 10, 'bold'))
         
         # Label
@@ -282,39 +291,56 @@ class ModernStyle:
                        background=ModernStyle.BG_PRIMARY,
                        foreground=ModernStyle.FG_PRIMARY)
         style.configure('Title.TLabel',
-                       font=('Segoe UI', 12, 'bold'),
-                       foreground=ModernStyle.ACCENT_BLUE)
+                       font=('Segoe UI', 16, 'bold'),
+                       foreground=ModernStyle.ACCENT_PURPLE)
         
         # Button
         style.configure('TButton',
-                       background=ModernStyle.ACCENT_BLUE,
-                       foreground='#1e1e2e',
+                       background=ModernStyle.ACCENT_PURPLE,
+                       foreground=ModernStyle.FG_PRIMARY,
                        borderwidth=0,
                        focuscolor='none',
-                       font=('Segoe UI', 9))
+                       font=('Segoe UI', 9, 'bold'),
+                       padding=[15, 8])
         style.map('TButton',
-                 background=[('active', ModernStyle.ACCENT_PURPLE)])
+                 background=[('active', ModernStyle.ACCENT_PINK),
+                           ('pressed', ModernStyle.ACCENT_BLUE)])
         
         style.configure('Success.TButton',
-                       background=ModernStyle.ACCENT_GREEN)
+                       background=ModernStyle.ACCENT_GREEN,
+                       foreground=ModernStyle.BG_PRIMARY)
+        style.map('Success.TButton',
+                 background=[('active', '#05dd8a')])
+        
         style.configure('Danger.TButton',
-                       background=ModernStyle.ACCENT_RED)
+                       background=ModernStyle.ACCENT_RED,
+                       foreground='white')
+        style.map('Danger.TButton',
+                 background=[('active', '#dd005f')])
+        
         style.configure('Warning.TButton',
-                       background=ModernStyle.ACCENT_YELLOW)
+                       background=ModernStyle.ACCENT_ORANGE,
+                       foreground=ModernStyle.BG_PRIMARY)
         
         # Entry
         style.configure('TEntry',
                        fieldbackground=ModernStyle.BG_SECONDARY,
                        foreground=ModernStyle.FG_PRIMARY,
-                       bordercolor=ModernStyle.BG_TERTIARY,
-                       insertcolor=ModernStyle.FG_PRIMARY)
+                       bordercolor=ModernStyle.ACCENT_PURPLE,
+                       insertcolor=ModernStyle.ACCENT_PINK,
+                       borderwidth=2)
         
         # Combobox
         style.configure('TCombobox',
                        fieldbackground=ModernStyle.BG_SECONDARY,
                        background=ModernStyle.BG_SECONDARY,
                        foreground=ModernStyle.FG_PRIMARY,
-                       arrowcolor=ModernStyle.ACCENT_BLUE)
+                       arrowcolor=ModernStyle.ACCENT_PURPLE,
+                       borderwidth=2,
+                       bordercolor=ModernStyle.ACCENT_PURPLE)
+        style.map('TCombobox',
+                 fieldbackground=[('readonly', ModernStyle.BG_SECONDARY)],
+                 selectbackground=[('readonly', ModernStyle.ACCENT_PURPLE)])
         
         # Treeview
         style.configure('Treeview',
@@ -325,12 +351,15 @@ class ModernStyle:
                        font=('Segoe UI', 9))
         style.configure('Treeview.Heading',
                        background=ModernStyle.BG_TERTIARY,
-                       foreground=ModernStyle.ACCENT_BLUE,
-                       borderwidth=1,
+                       foreground=ModernStyle.ACCENT_PINK,
+                       borderwidth=2,
+                       relief='flat',
                        font=('Segoe UI', 9, 'bold'))
         style.map('Treeview',
-                 background=[('selected', ModernStyle.ACCENT_BLUE)],
-                 foreground=[('selected', '#1e1e2e')])
+                 background=[('selected', ModernStyle.ACCENT_PURPLE)],
+                 foreground=[('selected', ModernStyle.FG_PRIMARY)])
+        style.map('Treeview.Heading',
+                 background=[('active', ModernStyle.ACCENT_BLUE)])
         
         # Notebook
         style.configure('TNotebook',
@@ -340,10 +369,95 @@ class ModernStyle:
                        background=ModernStyle.BG_SECONDARY,
                        foreground=ModernStyle.FG_SECONDARY,
                        padding=[20, 10],
-                       font=('Segoe UI', 9))
+                       borderwidth=0,
+                       font=('Segoe UI', 10))
         style.map('TNotebook.Tab',
                  background=[('selected', ModernStyle.BG_TERTIARY)],
-                 foreground=[('selected', ModernStyle.ACCENT_BLUE)])
+                 foreground=[('selected', ModernStyle.ACCENT_PINK)],
+                 expand=[('selected', [1, 1, 1, 0])])
+        
+        # Scrollbar
+        style.configure('Vertical.TScrollbar',
+                       background=ModernStyle.BG_TERTIARY,
+                       troughcolor=ModernStyle.BG_SECONDARY,
+                       borderwidth=0,
+                       arrowcolor=ModernStyle.ACCENT_PURPLE)
+        style.configure('Horizontal.TScrollbar',
+                       background=ModernStyle.BG_TERTIARY,
+                       troughcolor=ModernStyle.BG_SECONDARY,
+                       borderwidth=0,
+                       arrowcolor=ModernStyle.ACCENT_PURPLE)
+
+
+class SystemTrayManager:
+    """Quản lý System Tray"""
+    
+    def __init__(self, app):
+        self.app = app
+        self.icon = None
+        
+    def create_image(self):
+        """Tạo icon cho system tray"""
+        # Tạo icon đơn giản
+        width = 64
+        height = 64
+        image = Image.new('RGB', (width, height), ModernStyle.BG_PRIMARY)
+        dc = ImageDraw.Draw(image)
+        
+        # Vẽ database icon
+        dc.rectangle([10, 15, 54, 25], fill=ModernStyle.ACCENT_PURPLE, outline=ModernStyle.ACCENT_PINK)
+        dc.rectangle([10, 30, 54, 40], fill=ModernStyle.ACCENT_PURPLE, outline=ModernStyle.ACCENT_PINK)
+        dc.rectangle([10, 45, 54, 55], fill=ModernStyle.ACCENT_PURPLE, outline=ModernStyle.ACCENT_PINK)
+        
+        return image
+    
+    def show_window(self, icon=None, item=None):
+        """Hiển thị cửa sổ"""
+        self.app.root.after(0, self.app.root.deiconify)
+        self.app.root.after(0, self.app.root.lift)
+        self.app.root.after(0, self.app.root.focus_force)
+    
+    def hide_window(self):
+        """Ẩn cửa sổ"""
+        self.app.root.withdraw()
+    
+    def quit_app(self, icon=None, item=None):
+        """Thoát ứng dụng"""
+        if self.icon:
+            self.icon.stop()
+        if self.app.connector:
+            self.app.connector.close()
+        self.app.root.quit()
+    
+    def setup_tray(self):
+        """Thiết lập system tray"""
+        menu = pystray.Menu(
+            pystray.MenuItem('🗄️ Database Manager Pro', self.show_window, default=True),
+            pystray.MenuItem('━━━━━━━━━━━━━━', lambda: None, enabled=False),
+            pystray.MenuItem('📊 Show Window', self.show_window),
+            pystray.MenuItem('🔌 Connection Status', self.show_status),
+            pystray.MenuItem('━━━━━━━━━━━━━━', lambda: None, enabled=False),
+            pystray.MenuItem('❌ Exit', self.quit_app)
+        )
+        
+        self.icon = pystray.Icon('database_manager', self.create_image(), 'Database Manager Pro', menu)
+    
+    def show_status(self, icon=None, item=None):
+        """Hiển thị status"""
+        if self.app.connector:
+            status = f"Connected to {self.app.connector.db_type}"
+        else:
+            status = "Disconnected"
+        
+        # Show notification (if supported)
+        try:
+            self.icon.notify(status, 'Database Manager Pro')
+        except:
+            pass
+    
+    def run(self):
+        """Chạy system tray"""
+        self.icon.run()
 
 
 class DatabaseSortGUI:
@@ -366,8 +480,51 @@ class DatabaseSortGUI:
         self.pagination_offset = 0
         self.pagination_limit = 100
         
+        # System tray
+        self.tray_manager = SystemTrayManager(self)
+        
         self.setup_ui()
         self.center_window()
+        self.setup_window_events()
+        
+        # Start system tray in background thread
+        self.start_system_tray()
+    
+    def setup_window_events(self):
+        """Thiết lập event handlers cho window"""
+        # Handle window close - minimize to tray instead
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Handle minimize
+        self.root.bind('<Unmap>', self.on_minimize)
+    
+    def on_closing(self):
+        """Xử lý khi đóng cửa sổ - ẩn vào tray"""
+        if messagebox.askyesno("Minimize to Tray", 
+                              "Do you want to minimize to system tray?\n\n" +
+                              "Click 'No' to exit completely."):
+            self.tray_manager.hide_window()
+        else:
+            self.quit_application()
+    
+    def on_minimize(self, event):
+        """Xử lý khi minimize window"""
+        # Optional: auto hide to tray on minimize
+        pass
+    
+    def quit_application(self):
+        """Thoát ứng dụng hoàn toàn"""
+        if self.connector:
+            self.connector.close()
+        if self.tray_manager.icon:
+            self.tray_manager.icon.stop()
+        self.root.quit()
+    
+    def start_system_tray(self):
+        """Khởi động system tray trong thread riêng"""
+        self.tray_manager.setup_tray()
+        tray_thread = threading.Thread(target=self.tray_manager.run, daemon=True)
+        tray_thread.start()
     
     def center_window(self):
         """Căn giữa cửa sổ"""
@@ -415,15 +572,34 @@ class DatabaseSortGUI:
         header = ttk.Frame(parent, style='Card.TFrame')
         header.pack(fill="x", pady=(0, 10))
         
-        title_label = ttk.Label(header, text="🗄️ Database Manager Pro",
+        # Left side
+        left_frame = ttk.Frame(header, style='Card.TFrame')
+        left_frame.pack(side="left", fill="both", expand=True)
+        
+        title_label = ttk.Label(left_frame, text="🗄️ Database Manager Pro",
                                style='Title.TLabel',
-                               font=('Segoe UI', 16, 'bold'))
+                               foreground=ModernStyle.ACCENT_PURPLE,
+                               font=('Segoe UI', 18, 'bold'))
         title_label.pack(side="left", padx=20, pady=15)
         
-        # Connection status
-        self.conn_status = ttk.Label(header, text="⚫ Disconnected",
-                                    foreground=ModernStyle.ACCENT_RED)
-        self.conn_status.pack(side="right", padx=20, pady=15)
+        subtitle_label = ttk.Label(left_frame, text="Professional Database Management Tool",
+                                  foreground=ModernStyle.FG_SECONDARY,
+                                  font=('Segoe UI', 9))
+        subtitle_label.pack(side="left", padx=(0, 20), pady=15)
+        
+        # Right side - Connection status and tray info
+        right_frame = ttk.Frame(header, style='Card.TFrame')
+        right_frame.pack(side="right", padx=20, pady=15)
+        
+        tray_label = ttk.Label(right_frame, text="💡 Minimize to tray",
+                              foreground=ModernStyle.ACCENT_CYAN,
+                              font=('Segoe UI', 8))
+        tray_label.pack(side="top", anchor="e")
+        
+        self.conn_status = ttk.Label(right_frame, text="⚫ Disconnected",
+                                    foreground=ModernStyle.ACCENT_RED,
+                                    font=('Segoe UI', 10, 'bold'))
+        self.conn_status.pack(side="top", anchor="e", pady=(5, 0))
     
     def setup_query_tab(self):
         """Thiết lập tab Query Builder"""
@@ -443,7 +619,8 @@ class DatabaseSortGUI:
         # Search box
         search_frame = ttk.Frame(tables_frame)
         search_frame.pack(fill="x", pady=(0, 5))
-        ttk.Label(search_frame, text="🔍").pack(side="left", padx=(0, 5))
+        ttk.Label(search_frame, text="🔍", 
+                 foreground=ModernStyle.ACCENT_PURPLE).pack(side="left", padx=(0, 5))
         self.table_search_var = tk.StringVar()
         self.table_search_var.trace('w', self.filter_tables)
         search_entry = ttk.Entry(search_frame, textvariable=self.table_search_var)
@@ -456,12 +633,14 @@ class DatabaseSortGUI:
         self.table_listbox = tk.Listbox(tables_frame, 
                                         bg=ModernStyle.BG_SECONDARY,
                                         fg=ModernStyle.FG_PRIMARY,
-                                        selectbackground=ModernStyle.ACCENT_BLUE,
-                                        selectforeground='#1e1e2e',
+                                        selectbackground=ModernStyle.ACCENT_PURPLE,
+                                        selectforeground=ModernStyle.FG_PRIMARY,
                                         yscrollcommand=table_scroll.set,
                                         font=('Segoe UI', 9),
                                         borderwidth=0,
-                                        highlightthickness=0)
+                                        highlightthickness=2,
+                                        highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                        highlightcolor=ModernStyle.ACCENT_PINK)
         self.table_listbox.pack(fill="both", expand=True)
         table_scroll.config(command=self.table_listbox.yview)
         self.table_listbox.bind('<<ListboxSelect>>', self.on_table_select)
@@ -476,13 +655,15 @@ class DatabaseSortGUI:
         self.column_listbox = tk.Listbox(columns_frame, 
                                          bg=ModernStyle.BG_SECONDARY,
                                          fg=ModernStyle.FG_PRIMARY,
-                                         selectbackground=ModernStyle.ACCENT_BLUE,
-                                         selectforeground='#1e1e2e',
+                                         selectbackground=ModernStyle.ACCENT_PURPLE,
+                                         selectforeground=ModernStyle.FG_PRIMARY,
                                          selectmode="extended",
                                          yscrollcommand=col_scroll.set,
                                          font=('Segoe UI', 9),
                                          borderwidth=0,
-                                         highlightthickness=0)
+                                         highlightthickness=2,
+                                         highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                         highlightcolor=ModernStyle.ACCENT_PINK)
         self.column_listbox.pack(fill="both", expand=True)
         col_scroll.config(command=self.column_listbox.yview)
         
@@ -550,12 +731,13 @@ class DatabaseSortGUI:
                                    height=4,
                                    bg=ModernStyle.BG_SECONDARY,
                                    fg=ModernStyle.FG_PRIMARY,
-                                   insertbackground=ModernStyle.FG_PRIMARY,
+                                   insertbackground=ModernStyle.ACCENT_PINK,
                                    font=('Consolas', 9),
                                    yscrollcommand=filter_scroll.set,
                                    borderwidth=0,
-                                   highlightthickness=1,
-                                   highlightbackground=ModernStyle.BG_TERTIARY)
+                                   highlightthickness=2,
+                                   highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                   highlightcolor=ModernStyle.ACCENT_PINK)
         self.filter_text.pack(fill="both", expand=True)
         filter_scroll.config(command=self.filter_text.yview)
         self.filter_text.config(state='disabled')
@@ -579,13 +761,14 @@ class DatabaseSortGUI:
                                        height=4,
                                        bg=ModernStyle.BG_SECONDARY,
                                        fg=ModernStyle.FG_PRIMARY,
-                                       selectbackground=ModernStyle.ACCENT_BLUE,
-                                       selectforeground='#1e1e2e',
+                                       selectbackground=ModernStyle.ACCENT_PURPLE,
+                                       selectforeground=ModernStyle.FG_PRIMARY,
                                        yscrollcommand=sort_scroll.set,
                                        font=('Segoe UI', 9),
                                        borderwidth=0,
-                                       highlightthickness=1,
-                                       highlightbackground=ModernStyle.BG_TERTIARY)
+                                       highlightthickness=2,
+                                       highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                       highlightcolor=ModernStyle.ACCENT_PINK)
         self.sort_listbox.pack(fill="both", expand=True)
         sort_scroll.config(command=self.sort_listbox.yview)
         
@@ -612,7 +795,8 @@ class DatabaseSortGUI:
         left_actions = ttk.Frame(action_frame)
         left_actions.pack(side="left", fill="x", expand=True)
         
-        ttk.Label(left_actions, text="Limit:").pack(side="left", padx=5)
+        ttk.Label(left_actions, text="Limit:", 
+                 foreground=ModernStyle.ACCENT_PINK).pack(side="left", padx=5)
         self.limit_var = tk.StringVar(value="100")
         ttk.Combobox(left_actions, textvariable=self.limit_var,
                     values=['10', '50', '100', '500', '1000', '5000', 'All'],
@@ -628,11 +812,11 @@ class DatabaseSortGUI:
         ttk.Button(right_actions, text="🔍 Query",
                   command=self.view_data,
                   style='Success.TButton').pack(side="left", padx=5)
-        ttk.Button(right_actions, text="💾 Export CSV",
+        ttk.Button(right_actions, text="💾 CSV",
                   command=self.export_csv).pack(side="left", padx=5)
-        ttk.Button(right_actions, text="📊 Export Excel",
+        ttk.Button(right_actions, text="📊 Excel",
                   command=self.export_excel).pack(side="left", padx=5)
-        ttk.Button(right_actions, text="📋 Export JSON",
+        ttk.Button(right_actions, text="📋 JSON",
                   command=self.export_json).pack(side="left", padx=5)
     
     def setup_results_section(self, parent):
@@ -644,7 +828,8 @@ class DatabaseSortGUI:
         toolbar = ttk.Frame(result_frame)
         toolbar.pack(fill="x", pady=(0, 5))
         
-        self.result_info_label = ttk.Label(toolbar, text="No data")
+        self.result_info_label = ttk.Label(toolbar, text="No data",
+                                          foreground=ModernStyle.ACCENT_CYAN)
         self.result_info_label.pack(side="left")
         
         # Pagination controls
@@ -656,7 +841,9 @@ class DatabaseSortGUI:
         ttk.Button(pagination_frame, text="◀️", command=self.prev_page,
                   width=3).pack(side="left", padx=2)
         
-        self.page_label = ttk.Label(pagination_frame, text="Page 1")
+        self.page_label = ttk.Label(pagination_frame, text="Page 1",
+                                    foreground=ModernStyle.ACCENT_PINK,
+                                    font=('Segoe UI', 9, 'bold'))
         self.page_label.pack(side="left", padx=10)
         
         ttk.Button(pagination_frame, text="▶️", command=self.next_page,
@@ -686,7 +873,9 @@ class DatabaseSortGUI:
         # Context menu
         self.tree_context_menu = tk.Menu(self.result_tree, tearoff=0,
                                         bg=ModernStyle.BG_SECONDARY,
-                                        fg=ModernStyle.FG_PRIMARY)
+                                        fg=ModernStyle.FG_PRIMARY,
+                                        activebackground=ModernStyle.ACCENT_PURPLE,
+                                        activeforeground=ModernStyle.FG_PRIMARY)
         self.tree_context_menu.add_command(label="📋 Copy Cell", command=self.copy_cell)
         self.tree_context_menu.add_command(label="📄 Copy Row", command=self.copy_row)
         self.tree_context_menu.add_separator()
@@ -712,30 +901,29 @@ class DatabaseSortGUI:
         ttk.Button(toolbar, text="💾 Save SQL",
                   command=self.save_sql_file).pack(side="left", padx=5)
         
-        self.sql_info_label = ttk.Label(toolbar, text="Ready")
+        self.sql_info_label = ttk.Label(toolbar, text="Ready",
+                                       foreground=ModernStyle.ACCENT_CYAN)
         self.sql_info_label.pack(side="right", padx=5)
         
         # SQL Editor
         editor_frame = ttk.LabelFrame(self.sql_tab, text="✏️ SQL Editor", padding=10)
         editor_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         
-        # Line numbers and editor
-        editor_container = ttk.Frame(editor_frame)
-        editor_container.pack(fill="both", expand=True)
-        
-        self.sql_text = scrolledtext.ScrolledText(editor_container,
+        # Editor
+        self.sql_text = scrolledtext.ScrolledText(editor_frame,
                                                   bg=ModernStyle.BG_SECONDARY,
                                                   fg=ModernStyle.FG_PRIMARY,
-                                                  insertbackground=ModernStyle.FG_PRIMARY,
+                                                  insertbackground=ModernStyle.ACCENT_PINK,
                                                   font=('Consolas', 10),
                                                   wrap=tk.NONE,
                                                   borderwidth=0,
-                                                  highlightthickness=1,
-                                                  highlightbackground=ModernStyle.BG_TERTIARY)
+                                                  highlightthickness=2,
+                                                  highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                                  highlightcolor=ModernStyle.ACCENT_PINK)
         self.sql_text.pack(fill="both", expand=True)
         
         # Sample queries
-        self.sql_text.insert(1.0, """-- Sample Queries
+        self.sql_text.insert(1.0, """-- 💡 Sample SQL Queries
 -- SELECT * FROM table_name LIMIT 10;
 -- SELECT column1, column2 FROM table_name WHERE column1 > 100;
 -- SELECT * FROM table_name ORDER BY column1 DESC;
@@ -773,7 +961,8 @@ class DatabaseSortGUI:
         
         # Database Type
         row = 0
-        ttk.Label(form_frame, text="Database Type:").grid(row=row, column=0, sticky="w", padx=5, pady=10)
+        ttk.Label(form_frame, text="Database Type:", 
+                 foreground=ModernStyle.ACCENT_PINK).grid(row=row, column=0, sticky="w", padx=5, pady=10)
         self.db_type_var = tk.StringVar(value='sqlite')
         db_combo = ttk.Combobox(form_frame, textvariable=self.db_type_var,
                                values=['sqlite', 'mysql', 'postgresql', 'mongodb'],
@@ -783,29 +972,34 @@ class DatabaseSortGUI:
         
         # Host
         row += 1
-        ttk.Label(form_frame, text="Host:").grid(row=row, column=0, sticky="w", padx=5, pady=10)
+        ttk.Label(form_frame, text="Host:", 
+                 foreground=ModernStyle.ACCENT_PINK).grid(row=row, column=0, sticky="w", padx=5, pady=10)
         self.host_var = tk.StringVar(value='localhost')
         ttk.Entry(form_frame, textvariable=self.host_var, width=30).grid(row=row, column=1, sticky="w", padx=5, pady=10)
         
         # Port
-        ttk.Label(form_frame, text="Port:").grid(row=row, column=2, sticky="w", padx=5, pady=10)
+        ttk.Label(form_frame, text="Port:", 
+                 foreground=ModernStyle.ACCENT_PINK).grid(row=row, column=2, sticky="w", padx=5, pady=10)
         self.port_var = tk.StringVar(value='')
         ttk.Entry(form_frame, textvariable=self.port_var, width=10).grid(row=row, column=3, sticky="w", padx=5, pady=10)
         
         # User
         row += 1
-        ttk.Label(form_frame, text="Username:").grid(row=row, column=0, sticky="w", padx=5, pady=10)
+        ttk.Label(form_frame, text="Username:", 
+                 foreground=ModernStyle.ACCENT_PINK).grid(row=row, column=0, sticky="w", padx=5, pady=10)
         self.user_var = tk.StringVar(value='root')
         ttk.Entry(form_frame, textvariable=self.user_var, width=30).grid(row=row, column=1, sticky="w", padx=5, pady=10)
         
         # Password
-        ttk.Label(form_frame, text="Password:").grid(row=row, column=2, sticky="w", padx=5, pady=10)
+        ttk.Label(form_frame, text="Password:", 
+                 foreground=ModernStyle.ACCENT_PINK).grid(row=row, column=2, sticky="w", padx=5, pady=10)
         self.password_var = tk.StringVar()
         ttk.Entry(form_frame, textvariable=self.password_var, show="*", width=20).grid(row=row, column=3, sticky="w", padx=5, pady=10)
         
         # Database/Path
         row += 1
-        self.db_label = ttk.Label(form_frame, text="Database Path:")
+        self.db_label = ttk.Label(form_frame, text="Database Path:", 
+                                 foreground=ModernStyle.ACCENT_PINK)
         self.db_label.grid(row=row, column=0, sticky="w", padx=5, pady=10)
         self.database_var = tk.StringVar(value='database.db')
         self.db_entry = ttk.Entry(form_frame, textvariable=self.database_var, width=30)
@@ -841,10 +1035,11 @@ class DatabaseSortGUI:
                                                         fg=ModernStyle.FG_PRIMARY,
                                                         font=('Consolas', 9),
                                                         borderwidth=0,
-                                                        highlightthickness=1,
-                                                        highlightbackground=ModernStyle.BG_TERTIARY)
+                                                        highlightthickness=2,
+                                                        highlightbackground=ModernStyle.ACCENT_PURPLE,
+                                                        highlightcolor=ModernStyle.ACCENT_PINK)
         self.conn_info_text.pack(fill="both", expand=True)
-        self.conn_info_text.insert(1.0, "No active connection\n")
+        self.conn_info_text.insert(1.0, "⚫ No active connection\n\n💡 Configure settings above and click Connect")
         self.conn_info_text.config(state='disabled')
     
     def setup_status_bar(self, parent):
@@ -852,10 +1047,12 @@ class DatabaseSortGUI:
         status_frame = ttk.Frame(parent, style='Card.TFrame')
         status_frame.pack(fill="x", pady=(10, 0))
         
-        self.status_label = ttk.Label(status_frame, text="⚡ Ready")
+        self.status_label = ttk.Label(status_frame, text="⚡ Ready",
+                                     foreground=ModernStyle.ACCENT_GREEN)
         self.status_label.pack(side="left", padx=20, pady=10)
         
-        self.time_label = ttk.Label(status_frame, text="")
+        self.time_label = ttk.Label(status_frame, text="",
+                                    foreground=ModernStyle.ACCENT_CYAN)
         self.time_label.pack(side="right", padx=20, pady=10)
         
         self.update_time()
@@ -926,18 +1123,22 @@ class DatabaseSortGUI:
             
             if success:
                 messagebox.showinfo("✅ Success", f"Connection test successful!\n\n{message}")
-                self.status_label.config(text="✅ Test successful")
+                self.status_label.config(text="✅ Test successful", 
+                                       foreground=ModernStyle.ACCENT_GREEN)
             else:
                 messagebox.showerror("❌ Error", f"Connection test failed!\n\n{message}")
-                self.status_label.config(text="❌ Test failed")
+                self.status_label.config(text="❌ Test failed",
+                                       foreground=ModernStyle.ACCENT_RED)
                 
         except Exception as e:
             messagebox.showerror("❌ Error", f"Connection test failed!\n\n{str(e)}")
-            self.status_label.config(text="❌ Test failed")
+            self.status_label.config(text="❌ Test failed",
+                                   foreground=ModernStyle.ACCENT_RED)
     
     def connect_db(self):
         """Kết nối đến database"""
-        self.status_label.config(text="🔄 Connecting...")
+        self.status_label.config(text="🔄 Connecting...",
+                               foreground=ModernStyle.ACCENT_ORANGE)
         self.root.update()
         
         try:
@@ -970,9 +1171,10 @@ class DatabaseSortGUI:
                     self.table_listbox.insert(tk.END, table)
                 
                 # Update UI
-                self.conn_status.config(text=f"🟢 Connected to {db_type}",
+                self.conn_status.config(text=f"🟢 Connected to {db_type.upper()}",
                                        foreground=ModernStyle.ACCENT_GREEN)
-                self.status_label.config(text=f"✅ {message}")
+                self.status_label.config(text=f"✅ {message}",
+                                       foreground=ModernStyle.ACCENT_GREEN)
                 
                 # Update connection info
                 self.update_connection_info()
@@ -983,7 +1185,8 @@ class DatabaseSortGUI:
                 
         except Exception as e:
             messagebox.showerror("❌ Error", f"Connection failed!\n\n{str(e)}")
-            self.status_label.config(text="❌ Connection failed")
+            self.status_label.config(text="❌ Connection failed",
+                                   foreground=ModernStyle.ACCENT_RED)
             self.conn_status.config(text="⚫ Disconnected",
                                    foreground=ModernStyle.ACCENT_RED)
     
@@ -998,7 +1201,8 @@ class DatabaseSortGUI:
             
             self.conn_status.config(text="⚫ Disconnected",
                                    foreground=ModernStyle.ACCENT_RED)
-            self.status_label.config(text="🔌 Disconnected")
+            self.status_label.config(text="🔌 Disconnected",
+                                   foreground=ModernStyle.ACCENT_ORANGE)
             
             self.update_connection_info()
     
@@ -1011,40 +1215,40 @@ class DatabaseSortGUI:
             info = f"""✅ Active Connection
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Database Type: {self.connector.db_type.upper()}
-Status: Connected
-Connected at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+🗄️  Database Type: {self.connector.db_type.upper()}
+🟢 Status: Connected
+🕐 Connected at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-Connection Details:
+📋 Connection Details:
 """
             if self.connector.db_type == 'sqlite':
-                info += f"  Path: {self.database_var.get()}\n"
+                info += f"  📁 Path: {self.database_var.get()}\n"
             else:
-                info += f"  Host: {self.host_var.get()}\n"
-                info += f"  Port: {self.port_var.get()}\n"
-                info += f"  Database: {self.database_var.get()}\n"
-                info += f"  User: {self.user_var.get()}\n"
+                info += f"  🌐 Host: {self.host_var.get()}\n"
+                info += f"  🔌 Port: {self.port_var.get()}\n"
+                info += f"  🗄️  Database: {self.database_var.get()}\n"
+                info += f"  👤 User: {self.user_var.get()}\n"
             
             try:
                 tables = self.connector.get_tables()
-                info += f"\nTables: {len(tables)}\n"
-                info += f"\nAvailable Tables:\n"
+                info += f"\n📊 Tables: {len(tables)}\n"
+                info += f"\n📁 Available Tables:\n"
                 for table in tables:
                     try:
                         count = self.connector.get_row_count(table)
-                        info += f"  • {table} ({count} rows)\n"
+                        info += f"  • {table} ({count:,} rows)\n"
                     except:
                         info += f"  • {table}\n"
             except:
                 pass
             
         else:
-            info = "⚫ No active connection\n\nPlease configure and connect to a database."
+            info = "⚫ No active connection\n\n💡 Configure settings above and click Connect to get started!"
         
         self.conn_info_text.insert(1.0, info)
         self.conn_info_text.config(state='disabled')
     
-    # Table and column methods
+    # Table and column methods (implementation continued in next message due to length)
     def filter_tables(self, *args):
         """Lọc bảng theo tên"""
         search_term = self.table_search_var.get().lower()
@@ -1073,7 +1277,8 @@ Connection Details:
             for table in tables:
                 self.table_listbox.insert(tk.END, table)
             
-            self.status_label.config(text=f"✅ Refreshed {len(tables)} tables")
+            self.status_label.config(text=f"✅ Refreshed {len(tables)} tables",
+                                   foreground=ModernStyle.ACCENT_GREEN)
             self.update_connection_info()
         except Exception as e:
             messagebox.showerror("❌ Error", str(e))
@@ -1099,7 +1304,8 @@ Connection Details:
             
             # Get row count
             count = self.connector.get_row_count(table_name)
-            self.status_label.config(text=f"📊 Table: {table_name} ({count} rows, {len(columns)} columns)")
+            self.status_label.config(text=f"📊 Table: {table_name} ({count:,} rows, {len(columns)} columns)",
+                                   foreground=ModernStyle.ACCENT_CYAN)
             
         except Exception as e:
             messagebox.showerror("❌ Error", str(e))
@@ -1127,7 +1333,8 @@ Connection Details:
         self.filters[col] = (op, val)
         self.update_filter_display()
         
-        self.status_label.config(text=f"➕ Added filter: {col} {op} {val}")
+        self.status_label.config(text=f"➕ Added filter: {col} {op} {val}",
+                               foreground=ModernStyle.ACCENT_GREEN)
     
     def update_filter_display(self):
         """Cập nhật hiển thị filter"""
@@ -1146,7 +1353,8 @@ Connection Details:
         """Xóa tất cả filter"""
         self.filters = {}
         self.update_filter_display()
-        self.status_label.config(text="🗑️ All filters cleared")
+        self.status_label.config(text="🗑️ All filters cleared",
+                               foreground=ModernStyle.ACCENT_ORANGE)
     
     def filter_by_value(self):
         """Tạo filter từ giá trị đã chọn"""
@@ -1157,20 +1365,14 @@ Connection Details:
         item = self.result_tree.item(selection[0])
         values = item['values']
         
-        # Get column index
-        focused_column = self.result_tree.focus()
-        if not focused_column:
-            return
-        
-        # Ask user for column
         columns = self.result_tree['columns']
-        # Use first column value for now
         if columns and values:
             col = columns[0]
             val = values[0]
             self.filter_column_var.set(col)
             self.filter_value_var.set(str(val))
-            self.status_label.config(text=f"📋 Filter template created: {col} = {val}")
+            self.status_label.config(text=f"📋 Filter template created: {col} = {val}",
+                                   foreground=ModernStyle.ACCENT_CYAN)
     
     # Sort methods
     def add_sort_asc(self):
@@ -1184,7 +1386,8 @@ Connection Details:
             col = self.column_listbox.get(idx)
             self.sort_listbox.insert(tk.END, f"⬆️ {col}")
         
-        self.status_label.config(text="⬆️ Added ascending sort")
+        self.status_label.config(text="⬆️ Added ascending sort",
+                               foreground=ModernStyle.ACCENT_GREEN)
     
     def add_sort_desc(self):
         """Thêm cột sắp xếp giảm dần"""
@@ -1197,19 +1400,22 @@ Connection Details:
             col = self.column_listbox.get(idx)
             self.sort_listbox.insert(tk.END, f"⬇️ {col}")
         
-        self.status_label.config(text="⬇️ Added descending sort")
+        self.status_label.config(text="⬇️ Added descending sort",
+                               foreground=ModernStyle.ACCENT_GREEN)
     
     def remove_sort(self):
         """Xóa cột sắp xếp đã chọn"""
         selection = self.sort_listbox.curselection()
         if selection:
             self.sort_listbox.delete(selection[0])
-            self.status_label.config(text="❌ Removed sort column")
+            self.status_label.config(text="❌ Removed sort column",
+                                   foreground=ModernStyle.ACCENT_ORANGE)
     
     def clear_sorts(self):
         """Xóa tất cả sắp xếp"""
         self.sort_listbox.delete(0, tk.END)
-        self.status_label.config(text="🗑️ All sorts cleared")
+        self.status_label.config(text="🗑️ All sorts cleared",
+                               foreground=ModernStyle.ACCENT_ORANGE)
     
     def get_sort_config(self) -> Tuple[List[str], List[bool]]:
         """Lấy cấu hình sắp xếp"""
@@ -1232,7 +1438,8 @@ Connection Details:
             messagebox.showwarning("⚠️ Warning", "Please connect and select a table")
             return
         
-        self.status_label.config(text="🔄 Querying data...")
+        self.status_label.config(text="🔄 Querying data...",
+                               foreground=ModernStyle.ACCENT_ORANGE)
         self.root.update()
         
         try:
@@ -1257,17 +1464,18 @@ Connection Details:
             self.display_dataframe(df, self.result_tree)
             
             total_rows = self.connector.get_row_count(self.current_table, self.filters if self.filters else None)
-            self.result_info_label.config(text=f"📊 Showing {len(df)} of {total_rows} rows")
-            self.status_label.config(text=f"✅ Query completed: {len(df)} rows")
+            self.result_info_label.config(text=f"📊 Showing {len(df):,} of {total_rows:,} rows")
+            self.status_label.config(text=f"✅ Query completed: {len(df):,} rows",
+                                   foreground=ModernStyle.ACCENT_GREEN)
             self.update_page_label()
             
         except Exception as e:
             messagebox.showerror("❌ Error", f"Query failed!\n\n{str(e)}")
-            self.status_label.config(text="❌ Query failed")
+            self.status_label.config(text="❌ Query failed",
+                                   foreground=ModernStyle.ACCENT_RED)
     
     def display_dataframe(self, df, tree_widget):
         """Hiển thị DataFrame trong Treeview"""
-        # Clear existing
         tree_widget.delete(*tree_widget.get_children())
         
         if df.empty:
@@ -1275,7 +1483,6 @@ Connection Details:
             tree_widget['show'] = ''
             return
         
-        # Setup columns
         tree_widget['columns'] = list(df.columns)
         tree_widget['show'] = 'headings'
         
@@ -1283,7 +1490,6 @@ Connection Details:
             tree_widget.heading(col, text=col, command=lambda c=col: self.sort_by_column(c, tree_widget))
             tree_widget.column(col, width=120, minwidth=80)
         
-        # Insert data
         for idx, row in df.iterrows():
             values = [str(val)[:100] if len(str(val)) > 100 else str(val) for val in row]
             tree_widget.insert('', tk.END, values=values)
@@ -1291,7 +1497,6 @@ Connection Details:
     def sort_by_column(self, col, tree_widget):
         """Sắp xếp khi click vào header"""
         if self.current_df is not None:
-            # Toggle sort direction
             if hasattr(self, 'last_sort_col') and self.last_sort_col == col:
                 self.last_sort_asc = not self.last_sort_asc
             else:
@@ -1302,7 +1507,8 @@ Connection Details:
             self.display_dataframe(sorted_df, tree_widget)
             
             direction = "↑" if self.last_sort_asc else "↓"
-            self.status_label.config(text=f"🔽 Sorted by {col} {direction}")
+            self.status_label.config(text=f"🔽 Sorted by {col} {direction}",
+                                   foreground=ModernStyle.ACCENT_CYAN)
     
     # Pagination methods
     def update_page_label(self):
@@ -1354,15 +1560,14 @@ Connection Details:
         if not selection:
             return
         
-        # Get focused column
-        column = self.result_tree.focus_get()
         item = self.result_tree.item(selection[0])
         values = item['values']
         
         if values:
             self.root.clipboard_clear()
             self.root.clipboard_append(str(values[0]))
-            self.status_label.config(text="📋 Copied to clipboard")
+            self.status_label.config(text="📋 Copied to clipboard",
+                                   foreground=ModernStyle.ACCENT_GREEN)
     
     def copy_row(self):
         """Copy toàn bộ row"""
@@ -1376,7 +1581,8 @@ Connection Details:
         row_text = '\t'.join([str(v) for v in values])
         self.root.clipboard_clear()
         self.root.clipboard_append(row_text)
-        self.status_label.config(text="📋 Row copied to clipboard")
+        self.status_label.config(text="📋 Row copied to clipboard",
+                               foreground=ModernStyle.ACCENT_GREEN)
     
     # SQL Editor methods
     def execute_sql(self):
@@ -1394,7 +1600,8 @@ Connection Details:
             messagebox.showwarning("⚠️ Warning", "Please enter a SQL query")
             return
         
-        self.sql_info_label.config(text="🔄 Executing...")
+        self.sql_info_label.config(text="🔄 Executing...",
+                                  foreground=ModernStyle.ACCENT_ORANGE)
         self.root.update()
         
         try:
@@ -1405,19 +1612,23 @@ Connection Details:
             
             self.display_dataframe(df, self.sql_result_tree)
             
-            self.sql_info_label.config(text=f"✅ Success: {len(df)} rows in {elapsed:.2f}s")
-            self.status_label.config(text=f"✅ SQL executed: {len(df)} rows")
+            self.sql_info_label.config(text=f"✅ Success: {len(df):,} rows in {elapsed:.2f}s",
+                                      foreground=ModernStyle.ACCENT_GREEN)
+            self.status_label.config(text=f"✅ SQL executed: {len(df):,} rows",
+                                   foreground=ModernStyle.ACCENT_GREEN)
             
         except Exception as e:
             messagebox.showerror("❌ Error", f"SQL execution failed!\n\n{str(e)}")
-            self.sql_info_label.config(text="❌ Execution failed")
-            self.status_label.config(text="❌ SQL execution failed")
+            self.sql_info_label.config(text="❌ Execution failed",
+                                      foreground=ModernStyle.ACCENT_RED)
+            self.status_label.config(text="❌ SQL execution failed",
+                                   foreground=ModernStyle.ACCENT_RED)
     
     def clear_sql(self):
         """Xóa SQL editor"""
         self.sql_text.delete(1.0, tk.END)
         self.sql_result_tree.delete(*self.sql_result_tree.get_children())
-        self.sql_info_label.config(text="Ready")
+        self.sql_info_label.config(text="Ready", foreground=ModernStyle.ACCENT_CYAN)
     
     def load_sql_file(self):
         """Load SQL từ file"""
@@ -1431,7 +1642,8 @@ Connection Details:
                     content = f.read()
                 self.sql_text.delete(1.0, tk.END)
                 self.sql_text.insert(1.0, content)
-                self.status_label.config(text=f"📁 Loaded: {filename}")
+                self.status_label.config(text=f"📁 Loaded: {filename}",
+                                       foreground=ModernStyle.ACCENT_GREEN)
             except Exception as e:
                 messagebox.showerror("❌ Error", f"Failed to load file!\n\n{str(e)}")
     
@@ -1447,7 +1659,8 @@ Connection Details:
                 content = self.sql_text.get(1.0, tk.END)
                 with open(filename, 'w', encoding='utf-8') as f:
                     f.write(content)
-                self.status_label.config(text=f"💾 Saved: {filename}")
+                self.status_label.config(text=f"💾 Saved: {filename}",
+                                       foreground=ModernStyle.ACCENT_GREEN)
             except Exception as e:
                 messagebox.showerror("❌ Error", f"Failed to save file!\n\n{str(e)}")
     
@@ -1470,13 +1683,13 @@ Connection Details:
             messagebox.showwarning("⚠️ Warning", "Please connect and select a table")
             return
         
-        self.status_label.config(text=f"🔄 Exporting to {format.upper()}...")
+        self.status_label.config(text=f"🔄 Exporting to {format.upper()}...",
+                               foreground=ModernStyle.ACCENT_ORANGE)
         self.root.update()
         
         try:
             sort_cols, ascending = self.get_sort_config()
             
-            # Get all data for export (no limit)
             df = self.connector.query_data(
                 self.current_table,
                 filters=self.filters if self.filters else None,
@@ -1488,7 +1701,6 @@ Connection Details:
                 messagebox.showwarning("⚠️ Warning", "No data to export")
                 return
             
-            # File dialog
             if format == 'csv':
                 filename = filedialog.asksaveasfilename(
                     defaultextension=".csv",
@@ -1518,14 +1730,17 @@ Connection Details:
             
             if filename:
                 messagebox.showinfo("✅ Success", 
-                                  f"Exported {len(df)} rows to:\n{filename}")
-                self.status_label.config(text=f"✅ Exported {len(df)} rows to {format.upper()}")
+                                  f"Exported {len(df):,} rows to:\n{filename}")
+                self.status_label.config(text=f"✅ Exported {len(df):,} rows to {format.upper()}",
+                                       foreground=ModernStyle.ACCENT_GREEN)
             else:
-                self.status_label.config(text="❌ Export cancelled")
+                self.status_label.config(text="❌ Export cancelled",
+                                       foreground=ModernStyle.ACCENT_ORANGE)
                 
         except Exception as e:
             messagebox.showerror("❌ Error", f"Export failed!\n\n{str(e)}")
-            self.status_label.config(text="❌ Export failed")
+            self.status_label.config(text="❌ Export failed",
+                                   foreground=ModernStyle.ACCENT_RED)
 
 
 def main():
@@ -1539,14 +1754,6 @@ def main():
         pass
     
     app = DatabaseSortGUI(root)
-    
-    # Handle window close
-    def on_closing():
-        if app.connector:
-            app.connector.close()
-        root.destroy()
-    
-    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 
