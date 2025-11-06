@@ -1,0 +1,4 @@
+2025-11-04 19:35:52,803 - INFO - Config loaded
+2025-11-04 19:36:01,856 - INFO - User selected option: 16
+2025-11-04 19:41:49,953 - INFO - PowerShell command executed: Get-AppxPackage -allusers Microsoft.WindowsStore | Foreach {Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml"}
+2025-11-04 19:41:50,334 - INFO - PowerShell command executed: Get-AppxPackage -allusers Microsoft.XboxApp | Foreach {Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml"}
