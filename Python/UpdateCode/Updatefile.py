@@ -26,6 +26,8 @@ from pystray import MenuItem as item
 from cryptography.fernet import Fernet
 from plyer import notification
 from logging.handlers import RotatingFileHandler
+import io
+import base64
 
 # Language translations
 TRANSLATIONS = {
@@ -565,45 +567,110 @@ config.json
             return False
 
     def git_commit(self, message: str) -> bool:
-        """Git commit với message"""
+        """Git commit với message - improved version"""
         try:
+            # Kiểm tra xem có thay đổi không
+            status = self._git("status --porcelain")
+            if not status:
+                self.logger.info("No changes to commit")
+                if self.show_notifications and not self.silent_mode:
+                    self.notifier.send("No Changes", "Working directory clean")
+                return False
+            
             today = datetime.now().strftime("%Y-%m-%d")
             
+            # Kiểm tra commit mode
             if self.commit_mode == 'daily':
                 if self.last_commit_date == today:
                     self.logger.info("Already committed today (daily mode)")
+                    if self.show_notifications and not self.silent_mode:
+                        self.notifier.send("Daily Limit", "Already committed today")
                     return False
             elif self.commit_mode == 'manual':
-                self.logger.info("Manual mode - skipping auto commit")
-                return False
+                if not message:
+                    self.logger.info("Manual mode - message required")
+                    return False
             
-            if not message:
-                message = self.commit_message_template.format(
-                    datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    date=datetime.now().strftime("%Y-%m-%d"),
-                    time=datetime.now().strftime("%H:%M:%S"),
-                    user=os.environ.get('USERNAME', 'user')
-                )
+            # Tạo commit message
+            if not message or message.strip() == "":
+                if self.use_conventional_commits:
+                    commit_type = self._detect_commit_type(status)
+                    message = f"{commit_type}: Auto update - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                else:
+                    message = self.commit_message_template.format(
+                        datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        date=datetime.now().strftime("%Y-%m-%d"),
+                        time=datetime.now().strftime("%H:%M:%S"),
+                        user=os.environ.get('USERNAME', 'user')
+                    )
             
-            # FIX 3: Escape double quotes trong commit message
-            message = message.replace('"', '\\"')
+            # Escape quotes
+            message = message.replace('"', '\\"').replace("'", "\\'")
             
-            result = self._git(f'commit -m "{message}"')
-            if result is not None:
-                self.last_commit_date = today
-                self.save_config()
-                self.logger.info(f"Committed: {message}")
-                
-                if self.show_notifications and not self.silent_mode:
-                    self.notifier.send("Commit Success", f"Committed: {message[:50]}...")
-                
-                return True
+            # Commit với retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = self._git(f'commit -m "{message}"')
+                    if result is not None:
+                        self.last_commit_date = today
+                        self.save_config()
+                        
+                        # Đếm số files đã commit
+                        files_changed = len(status.strip().split('\n'))
+                        
+                        self.logger.info(f"Committed: {message} ({files_changed} files)")
+                        
+                        if self.show_notifications and not self.silent_mode:
+                            self.notifier.send(
+                                "✅ Commit Success", 
+                                f"{files_changed} file(s) committed\n{message[:50]}..."
+                            )
+                        
+                        return True
+                    elif attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    else:
+                        return False
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"Commit attempt {attempt+1} failed: {e}")
+                        time.sleep(1)
+                    else:
+                        raise
+            
             return False
+            
         except Exception as e:
             self.logger.error(f"Error committing: {e}")
             if self.show_notifications and not self.silent_mode:
-                self.notifier.send("Commit Failed", str(e))
+                self.notifier.send("❌ Commit Failed", str(e))
             return False
+
+    def _detect_commit_type(self, status: str) -> str:
+        """Detect conventional commit type based on changes"""
+        lines = status.strip().split('\n')
+        
+        # Check for new files
+        if any(line.startswith('??') or line.startswith('A ') for line in lines):
+            return "feat"
+        
+        # Check for deletions
+        if any(line.startswith('D ') for line in lines):
+            return "refactor"
+        
+        # Check for modifications
+        if any(line.startswith('M ') for line in lines):
+            # Check if it's documentation
+            if any('.md' in line or 'README' in line for line in lines):
+                return "docs"
+            # Check if it's config
+            if any(('.json' in line or '.yaml' in line or '.yml' in line or '.toml' in line) for line in lines):
+                return "chore"
+            return "fix"
+        
+        return "chore"
 
     def git_push(self) -> bool:
         """Git push lên remote"""
@@ -752,7 +819,7 @@ config.json
 
 
 class SystemTrayManager:
-    """Quản lý System Tray (hỗ trợ double-click để hiện cửa sổ)"""
+    """Quản lý System Tray với icon đẹp hơn"""
     
     def __init__(self, gui_app):
         self.gui_app = gui_app
@@ -760,95 +827,126 @@ class SystemTrayManager:
         self.is_running = False
     
     def create_image(self):
-        """Tạo icon cho system tray"""
-        width = 64
-        height = 64
-        # FIX: Kiểm tra colors attribute tồn tại
+        """Tạo icon đẹp hơn cho system tray và taskbar"""
+        width = 128
+        height = 128
+        
         try:
             color = self.gui_app.colors.get('accent', '#58a6ff')
         except AttributeError:
             color = '#58a6ff'
         
-        image = Image.new('RGB', (width, height), color=color)
+        # Tạo gradient background
+        image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         dc = ImageDraw.Draw(image)
-        # FIX: Dùng font lớn hơn và vị trí tốt hơn
+        
+        # Vẽ circle background với gradient effect
+        for i in range(20):
+            alpha = int(255 * (1 - i/20))
+            fill_color = self._hex_to_rgba(color, alpha)
+            dc.ellipse(
+                [(10+i*2, 10+i*2), (width-10-i*2, height-10-i*2)],
+                fill=fill_color
+            )
+        
+        # Vẽ main circle
+        dc.ellipse([(14, 14), (width-14, height-14)], fill=color)
+        
+        # Vẽ GitHub icon style
         try:
             from PIL import ImageFont
-            font = ImageFont.truetype("arial.ttf", 32)
-            dc.text((12, 12), "GH", fill='white', font=font)
-        except:
-            dc.text((16, 20), "GH", fill='white')
+            # Try to use a nice font
+            try:
+                font = ImageFont.truetype("segoeui.ttf", 52)
+            except:
+                try:
+                    font = ImageFont.truetype("arial.ttf", 52)
+                except:
+                    font = ImageFont.load_default()
+            
+            # Vẽ "GH" text với shadow
+            dc.text((29, 29), "GH", fill=(0, 0, 0, 80), font=font)
+            dc.text((28, 28), "GH", fill='white', font=font)
+        except Exception as e:
+            # Fallback: vẽ simple text
+            dc.text((34, 44), "GH", fill='white', font=None)
+        
+        # Vẽ status indicator (nếu background đang chạy)
+        if self.gui_app.uploader.is_background_running():
+            # Green dot
+            dc.ellipse([(width-30, height-30), (width-10, height-10)], 
+                      fill='#10b981', outline='white', width=2)
+        
         return image
     
-    def show_window(self, icon=None, item=None):
-        """Hiển thị cửa sổ chính"""
-        try:
-            self.gui_app.root.after(0, self._show_window_main_thread)
-        except Exception as e:
-            print(f"Error showing window: {e}")
+    def _hex_to_rgba(self, hex_color: str, alpha: int = 255) -> tuple:
+        """Convert hex color to RGBA tuple"""
+        hex_color = hex_color.lstrip('#')
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        return (r, g, b, alpha)
     
-    def _show_window_main_thread(self):
-        """Show window trong main thread"""
+    def create_taskbar_icon(self):
+        """Tạo icon cho taskbar (format .ico)"""
         try:
-            self.gui_app.root.deiconify()
-            self.gui_app.root.lift()
-            self.gui_app.root.focus_force()
-            self.gui_app.root.state('normal')
+            image = self.create_image()
+            
+            # Convert to ICO format
+            icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128)]
+            ico_images = []
+            
+            for size in icon_sizes:
+                resized = image.resize(size, Image.Resampling.LANCZOS)
+                ico_images.append(resized)
+            
+            # Save to bytes
+            ico_bytes = io.BytesIO()
+            ico_images[0].save(ico_bytes, format='ICO', sizes=icon_sizes)
+            ico_bytes.seek(0)
+            
+            # Save to temp file
+            icon_path = Path.home() / '.github_uploader' / 'app_icon.ico'
+            with open(icon_path, 'wb') as f:
+                f.write(ico_bytes.read())
+            
+            return str(icon_path)
         except Exception as e:
-            print(f"Error in show_window_main_thread: {e}")
+            print(f"Error creating taskbar icon: {e}")
+            return None
     
-    def hide_window(self):
-        """Ẩn cửa sổ chính"""
-        try:
-            self.gui_app.root.withdraw()
-        except Exception as e:
-            print(f"Error hiding window: {e}")
-    
-    def quit_app(self, icon=None, item=None):
-        """Thoát ứng dụng"""
-        try:
-            self.is_running = False
-            if self.icon:
-                self.icon.stop()
-            self.gui_app.root.after(0, self._quit_main_thread)
-        except Exception as e:
-            print(f"Error quitting: {e}")
-            os._exit(0)
-    
-    def _quit_main_thread(self):
-        """Quit trong main thread"""
-        try:
-            self.gui_app.uploader.stop_background_mode()
-            self.gui_app.root.quit()
-            self.gui_app.root.destroy()
-        except Exception:
-            pass
-        finally:
-            sys.exit(0)
-
     def start(self):
         """Khởi động system tray"""
         if self.is_running:
             return
         
         try:
-            # FIX: Tạo menu với đầy đủ các mục
+            # Tạo menu
             menu = (
                 item(self.gui_app.t('app_title'), self.show_window, default=True),
-                item('Show Window', self.show_window),
-                item(self.gui_app.t('exit'), self.quit_app)
+                item('─' * 20, None, enabled=False),
+                item('📊 Show Window', self.show_window),
+                item('🚀 Quick Upload', self.quick_upload),
+                item('─' * 20, None, enabled=False),
+                item(
+                    '🔄 Background Mode',
+                    pystray.Menu(
+                        item('▶️ Start', self.start_background),
+                        item('⏸️ Stop', self.stop_background),
+                    )
+                ),
+                item('─' * 20, None, enabled=False),
+                item('🚪 ' + self.gui_app.t('exit'), self.quit_app)
             )
             
             self.icon = pystray.Icon(
                 "GitHub Uploader",
                 self.create_image(),
-                "GitHub Auto Upload Tool",
+                "GitHub Auto Upload Tool Pro",
                 menu
             )
             
             self.is_running = True
             
-            # FIX: Chạy icon.run() trong thread riêng
+            # Chạy icon trong thread
             def run_icon():
                 try:
                     self.icon.run()
@@ -859,23 +957,43 @@ class SystemTrayManager:
             thread = Thread(target=run_icon, daemon=True)
             thread.start()
             
-            # FIX: Đợi một chút để icon xuất hiện
             time.sleep(0.5)
-            
             print("System tray started successfully")
             
         except Exception as e:
             print(f"Failed to start system tray: {e}")
             self.is_running = False
 
-    def stop(self):
-        """Dừng system tray"""
-        try:
-            self.is_running = False
-            if self.icon:
-                self.icon.stop()
-        except Exception as e:
-            print(f"Error stopping tray: {e}")
+    def quick_upload(self, icon=None, item=None):
+        """Quick upload từ tray menu"""
+        def do_quick_upload():
+            try:
+                if self.gui_app.uploader.git_add_all():
+                    if self.gui_app.uploader.git_commit(""):
+                        if self.gui_app.uploader.git_push():
+                            self.gui_app.uploader.notifier.send(
+                                "✅ Success", 
+                                "Quick upload completed!"
+                            )
+                        else:
+                            self.gui_app.uploader.notifier.send(
+                                "❌ Failed", 
+                                "Push failed"
+                            )
+            except Exception as e:
+                print(f"Quick upload error: {e}")
+        
+        Thread(target=do_quick_upload, daemon=True).start()
+    
+    def start_background(self, icon=None, item=None):
+        """Start background từ tray"""
+        self.gui_app.root.after(0, self.gui_app.start_background)
+    
+    def stop_background(self, icon=None, item=None):
+        """Stop background từ tray"""
+        self.gui_app.root.after(0, self.gui_app.stop_background)
+
+    # ...existing code...
 
 
 class SettingsDialog(tk.Toplevel):
@@ -1016,24 +1134,33 @@ class GitHubUploaderGUI:
         self.root.title(self.t('app_title') + " v4.1")
         self.root.geometry("950x750")
 
-        # FIX: Verify password trước khi khởi tạo UI
+        # Verify password trước khi khởi tạo UI
         if getattr(self.uploader, 'app_password', None):
             if not self._verify_app_password():
                 self.root.destroy()
                 sys.exit(0)
 
-        # FIX: Apply theme trước khi tạo widgets
+        # Apply theme trước khi tạo widgets
         self.apply_theme()
         
         self.create_widgets()
         
-        # FIX: Khởi tạo tray_manager SAU khi tạo widgets
+        # Khởi tạo tray_manager
         self.tray_manager = SystemTrayManager(self)
         
-        # FIX: Set protocol TRƯỚC khi start tray
+        # Set taskbar icon
+        try:
+            icon_path = self.tray_manager.create_taskbar_icon()
+            if icon_path and Path(icon_path).exists():
+                self.root.iconbitmap(default=icon_path)
+                print(f"Taskbar icon set: {icon_path}")
+        except Exception as e:
+            print(f"Failed to set taskbar icon: {e}")
+        
+        # Set protocol
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # FIX: Start tray với error handling
+        # Start tray
         try:
             self.tray_manager.start()
             print("Tray manager started")
@@ -1041,7 +1168,7 @@ class GitHubUploaderGUI:
             print(f"Failed to start system tray: {e}")
             self.uploader.logger.warning(f"Failed to start system tray: {e}")
 
-        # FIX: Start minimized nếu cần
+        # Start minimized
         if self.uploader.start_minimized:
             self.root.after(1000, self.root.withdraw)
 
@@ -1183,36 +1310,127 @@ class GitHubUploaderGUI:
         self.create_widgets()
 
     def upload_code(self):
-        """Upload code to GitHub"""
+        """Upload code to GitHub - improved version"""
         if not getattr(self.uploader, 'repo_path', None):
             messagebox.showwarning(self.t('warning'), "Please configure repository first!")
             return
 
-        message = simpledialog.askstring("Commit Message", 
-            "Enter commit message (leave empty for auto):", parent=self.root)
-
-        if message is None:
+        # Dialog với nhiều options hơn
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Commit Options")
+        dialog.geometry("480x280")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.configure(bg=self.colors['bg'])
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (480 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (280 // 2)
+        dialog.geometry(f"480x280+{x}+{y}")
+        
+        tk.Label(dialog, text="📝 Commit Message", 
+                font=('Segoe UI', 12, 'bold'),
+                bg=self.colors['bg'], fg=self.colors['fg']).pack(pady=(16, 8))
+        
+        # Message entry
+        message_frame = tk.Frame(dialog, bg=self.colors['bg'])
+        message_frame.pack(fill='x', padx=20, pady=8)
+        
+        message_var = StringVar()
+        message_entry = tk.Entry(message_frame, textvariable=message_var,
+                                font=('Segoe UI', 10), bg=self.colors['card'],
+                                fg=self.colors['fg'], relief='flat')
+        message_entry.pack(fill='x', ipady=6)
+        message_entry.focus()
+        
+        # Conventional commits checkbox
+        use_conventional = BooleanVar(value=self.uploader.use_conventional_commits)
+        tk.Checkbutton(dialog, text="Use Conventional Commits (auto-detect type)",
+                      variable=use_conventional, bg=self.colors['bg'],
+                      fg=self.colors['fg'], selectcolor=self.colors['card'],
+                      activebackground=self.colors['bg'],
+                      activeforeground=self.colors['fg']).pack(pady=8)
+        
+        # Commit type selector (for conventional commits)
+        type_frame = tk.Frame(dialog, bg=self.colors['bg'])
+        type_frame.pack(pady=8)
+        
+        tk.Label(type_frame, text="Type:", bg=self.colors['bg'],
+                fg=self.colors['fg']).pack(side='left', padx=(0, 8))
+        
+        commit_type = StringVar(value="feat")
+        types = ['feat', 'fix', 'docs', 'style', 'refactor', 'test', 'chore']
+        type_menu = ttk.Combobox(type_frame, textvariable=commit_type,
+                                values=types, state='readonly', width=12)
+        type_menu.pack(side='left')
+        
+        result = {'cancelled': True}
+        
+        def on_commit():
+            msg = message_var.get().strip()
+            if use_conventional.get() and msg:
+                msg = f"{commit_type.get()}: {msg}"
+            result['message'] = msg
+            result['cancelled'] = False
+            dialog.destroy()
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg=self.colors['bg'])
+        btn_frame.pack(pady=16)
+        
+        tk.Button(btn_frame, text="✅ Commit & Push", command=on_commit,
+                 bg=self.colors['success'], fg='white',
+                 font=('Segoe UI', 10, 'bold'), relief='flat',
+                 cursor='hand2', padx=20, pady=8).pack(side='left', padx=8)
+        
+        tk.Button(btn_frame, text="❌ Cancel", command=on_cancel,
+                 bg=self.colors['danger'], fg='white',
+                 font=('Segoe UI', 10, 'bold'), relief='flat',
+                 cursor='hand2', padx=20, pady=8).pack(side='left', padx=8)
+        
+        # Bind Enter key
+        message_entry.bind('<Return>', lambda e: on_commit())
+        dialog.bind('<Escape>', lambda e: on_cancel())
+        
+        dialog.wait_window()
+        
+        if result['cancelled']:
             return
-
+        
+        message = result.get('message', '')
+        
+        # Progress window
         progress = tk.Toplevel(self.root)
         progress.title(self.t('uploading'))
-        progress.geometry("420x160")
+        progress.geometry("500x200")
         progress.transient(self.root)
         progress.grab_set()
         progress.protocol("WM_DELETE_WINDOW", lambda: None)
         progress.configure(bg=self.colors['bg'])
+        
+        # Center progress
+        progress.update_idletasks()
+        x = (progress.winfo_screenwidth() // 2) - (500 // 2)
+        y = (progress.winfo_screenheight() // 2) - (200 // 2)
+        progress.geometry(f"500x200+{x}+{y}")
 
-        tk.Label(progress, text=self.t('uploading'), 
-                font=('Segoe UI', 12, 'bold'), bg=self.colors['bg'],
-                fg=self.colors['fg']).pack(pady=16)
+        tk.Label(progress, text="🚀 " + self.t('uploading'), 
+                font=('Segoe UI', 14, 'bold'), bg=self.colors['bg'],
+                fg=self.colors['fg']).pack(pady=20)
 
-        pb = ttk.Progressbar(progress, mode='indeterminate', length=340)
+        pb = ttk.Progressbar(progress, mode='indeterminate', length=400)
         pb.pack(pady=10)
         pb.start(10)
 
-        status_label = tk.Label(progress, text="Preparing...", font=('Segoe UI', 9),
-                               bg=self.colors['bg'], fg=self.colors['fg_secondary'])
-        status_label.pack(pady=8)
+        status_label = tk.Label(progress, text="Preparing...", 
+                               font=('Segoe UI', 10),
+                               bg=self.colors['bg'], 
+                               fg=self.colors['fg_secondary'])
+        status_label.pack(pady=12)
 
         def update_status(text):
             try:
@@ -1224,41 +1442,49 @@ class GitHubUploaderGUI:
 
         def do_upload():
             try:
-                self.root.after(0, lambda: update_status("Adding files..."))
-                time.sleep(0.3)
+                self.root.after(0, lambda: update_status("📂 Adding files..."))
+                time.sleep(0.5)
 
                 if not self.uploader.git_add_all():
                     raise Exception("Git add failed")
 
-                self.root.after(0, lambda: update_status("Committing..."))
-                time.sleep(0.3)
+                self.root.after(0, lambda: update_status("💾 Committing changes..."))
+                time.sleep(0.5)
 
-                # FIX 10: Truyền message hoặc empty string
                 if not self.uploader.git_commit(message or ""):
                     raise Exception("Commit failed - Nothing to commit or daily limit reached")
 
-                self.root.after(0, lambda: update_status("Pushing..."))
-                time.sleep(0.3)
+                self.root.after(0, lambda: update_status("📤 Pushing to GitHub..."))
+                time.sleep(0.5)
 
                 if not self.uploader.git_push():
                     raise Exception("Push failed")
 
-                # FIX 11: Đảm bảo progress được destroy an toàn
                 try:
                     if progress.winfo_exists():
                         progress.destroy()
                 except Exception:
                     pass
                 
+                # Refresh UI to update status
+                self.root.after(0, self.refresh_ui)
+                
                 if self.uploader.show_notifications:
-                    self.root.after(0, lambda: messagebox.showinfo(self.t('success'), self.t('upload_success')))
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        self.t('success'), 
+                        self.t('upload_success')
+                    ))
+                    
             except Exception as e:
                 try:
                     if progress.winfo_exists():
                         progress.destroy()
                 except Exception:
                     pass
-                self.root.after(0, lambda: messagebox.showerror(self.t('error'), f"{self.t('upload_failed')}: {str(e)}"))
+                self.root.after(0, lambda: messagebox.showerror(
+                    self.t('error'), 
+                    f"{self.t('upload_failed')}: {str(e)}"
+                ))
 
         Thread(target=do_upload, daemon=True).start()
 
