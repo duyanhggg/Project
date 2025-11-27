@@ -446,22 +446,71 @@ class GitHubUploader:
             self.logger.error(f"Error saving config: {e}")
 
     def run_command(self, command: str):
-        """Chạy command và trả về output (None nếu lỗi)"""
+        """Chạy command và trả về output - improved version"""
         try:
+            # Kiểm tra repo path trước
+            if self.repo_path and not Path(self.repo_path).exists():
+                self.logger.error(f"Repository path doesn't exist: {self.repo_path}")
+                return None
+            
             result = subprocess.run(
                 command,
                 shell=True,
                 cwd=self.repo_path if self.repo_path else None,
                 capture_output=True,
                 text=True,
-                timeout=120
+                timeout=120,
+                encoding='utf-8',
+                errors='replace'
             )
+            
             if result.returncode != 0:
-                self.logger.debug(f"Command '{command}' returned non-zero code: {result.stderr.strip()}")
+                stderr = result.stderr.strip()
+                
+                # FIX: Auto-handle safe.directory error
+                if "fatal: detected dubious ownership" in stderr or \
+                   "is owned by" in stderr or \
+                   "safe.directory" in stderr:
+                    self.logger.warning("Detected safe.directory issue, attempting auto-fix...")
+                    if self._add_safe_directory():
+                        # Retry command
+                        self.logger.info("Retrying command after safe.directory fix...")
+                        retry_result = subprocess.run(
+                            command,
+                            shell=True,
+                            cwd=self.repo_path if self.repo_path else None,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            encoding='utf-8',
+                            errors='replace'
+                        )
+                        if retry_result.returncode == 0:
+                            return retry_result.stdout.strip()
+                        stderr = retry_result.stderr.strip()
+                
+                # Log chi tiết error
+                self.logger.error(f"Command failed: {command}")
+                self.logger.error(f"Exit code: {result.returncode}")
+                self.logger.error(f"Error output: {stderr}")
+                
+                # Kiểm tra các lỗi cụ thể khác
+                if "not a git repository" in stderr.lower():
+                    self.logger.error("Not a git repository. Please initialize git first.")
+                elif "permission denied" in stderr.lower():
+                    self.logger.error("Permission denied. Check file permissions.")
+                elif "fatal: pathspec" in stderr.lower():
+                    self.logger.error("Invalid file path or pattern.")
+                
                 return None
+            
             return result.stdout.strip()
+            
         except subprocess.TimeoutExpired:
-            self.logger.error(f"Command timeout: {command}")
+            self.logger.error(f"Command timeout (120s): {command}")
+            return None
+        except FileNotFoundError:
+            self.logger.error(f"Git command not found. Is Git installed?")
             return None
         except Exception as e:
             self.logger.error(f"Error running command '{command}': {e}")
@@ -558,12 +607,102 @@ config.json
             messagebox.showerror("Error", str(e))
 
     def git_add_all(self) -> bool:
-        """Git add tất cả files - corrected behavior"""
+        """Git add tất cả files - improved error handling"""
         try:
-            result = self._git("add .")
-            return result is not None
+            # Kiểm tra repo path
+            if not self.repo_path or not Path(self.repo_path).exists():
+                self.logger.error("Repository path not configured or doesn't exist")
+                return False
+            
+            # Kiểm tra có phải git repo không
+            git_dir = Path(self.repo_path) / '.git'
+            if not git_dir.exists():
+                self.logger.error("Not a git repository")
+                return False
+            
+            # FIX: Kiểm tra và fix safe.directory issue
+            if not self._ensure_safe_directory():
+                self.logger.error("Failed to configure safe directory")
+                return False
+            
+            # Kiểm tra có files để add không
+            status = self._git("status --porcelain")
+            if status is None:
+                self.logger.error("Failed to get git status")
+                return False
+            
+            if not status.strip():
+                self.logger.info("No files to add")
+                return True  # Not an error, just nothing to add
+            
+            # Thử add với verbose output
+            result = self._git("add -A -v")
+            if result is None:
+                # Thử phương án khác
+                self.logger.warning("'git add -A' failed, trying 'git add .'")
+                result = self._git("add .")
+                if result is None:
+                    self.logger.error("Both 'git add' methods failed")
+                    return False
+            
+            self.logger.info(f"Successfully added files: {len(status.strip().split(chr(10)))} file(s)")
+            return True
+            
         except Exception as e:
             self.logger.error(f"Error adding files: {e}")
+            return False
+
+    def _ensure_safe_directory(self) -> bool:
+        """Đảm bảo repo path được add vào safe.directory"""
+        try:
+            # Kiểm tra xem đã được add chưa
+            result = self.run_command("git config --global --get-all safe.directory")
+            
+            if result is None:
+                # Config chưa có, add luôn
+                return self._add_safe_directory()
+            
+            # Chuẩn hóa path để so sánh
+            repo_path_normalized = str(Path(self.repo_path).resolve()).replace('\\', '/')
+            
+            # Kiểm tra xem repo path đã có trong list chưa
+            safe_dirs = result.split('\n') if result else []
+            safe_dirs_normalized = [d.replace('\\', '/') for d in safe_dirs]
+            
+            if repo_path_normalized not in safe_dirs_normalized:
+                return self._add_safe_directory()
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking safe.directory: {e}")
+            return self._add_safe_directory()
+
+    def _add_safe_directory(self) -> bool:
+        """Add repo path vào safe.directory"""
+        try:
+            # Normalize path
+            repo_path = str(Path(self.repo_path).resolve()).replace('\\', '/')
+            
+            # Add to global config
+            result = self.run_command(f'git config --global --add safe.directory "{repo_path}"')
+            
+            if result is not None or self.run_command("git status") is not None:
+                self.logger.info(f"Added safe.directory: {repo_path}")
+                return True
+            
+            # Fallback: thử với wildcard
+            self.logger.warning("Trying wildcard safe.directory")
+            result = self.run_command('git config --global --add safe.directory "*"')
+            
+            if result is not None or self.run_command("git status") is not None:
+                self.logger.info("Added wildcard safe.directory")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error adding safe.directory: {e}")
             return False
 
     def git_commit(self, message: str) -> bool:
@@ -1310,10 +1449,35 @@ class GitHubUploaderGUI:
         self.create_widgets()
 
     def upload_code(self):
-        """Upload code to GitHub - improved version"""
+        """Upload code to GitHub - improved error handling"""
         if not getattr(self.uploader, 'repo_path', None):
             messagebox.showwarning(self.t('warning'), "Please configure repository first!")
             return
+        
+        # Kiểm tra git repository
+        git_dir = Path(self.uploader.repo_path) / '.git'
+        if not git_dir.exists():
+            response = messagebox.askyesno(
+                self.t('warning'),
+                "Not a git repository. Initialize git now?"
+            )
+            if response:
+                if self.uploader.run_command("git init"):
+                    messagebox.showinfo(self.t('success'), "Git initialized!")
+                    # FIX: Auto-add safe.directory sau khi init
+                    self.uploader._ensure_safe_directory()
+                else:
+                    messagebox.showerror(self.t('error'), "Failed to initialize git")
+                    return
+            else:
+                return
+        else:
+            # FIX: Ensure safe.directory trước khi upload
+            if not self.uploader._ensure_safe_directory():
+                messagebox.showwarning(
+                    self.t('warning'),
+                    "Could not configure safe.directory. Upload may fail."
+                )
 
         # Dialog với nhiều options hơn
         dialog = tk.Toplevel(self.root)
@@ -1333,7 +1497,6 @@ class GitHubUploaderGUI:
                 font=('Segoe UI', 12, 'bold'),
                 bg=self.colors['bg'], fg=self.colors['fg']).pack(pady=(16, 8))
         
-        # Message entry
         message_frame = tk.Frame(dialog, bg=self.colors['bg'])
         message_frame.pack(fill='x', padx=20, pady=8)
         
@@ -1344,7 +1507,6 @@ class GitHubUploaderGUI:
         message_entry.pack(fill='x', ipady=6)
         message_entry.focus()
         
-        # Conventional commits checkbox
         use_conventional = BooleanVar(value=self.uploader.use_conventional_commits)
         tk.Checkbutton(dialog, text="Use Conventional Commits (auto-detect type)",
                       variable=use_conventional, bg=self.colors['bg'],
@@ -1352,7 +1514,6 @@ class GitHubUploaderGUI:
                       activebackground=self.colors['bg'],
                       activeforeground=self.colors['fg']).pack(pady=8)
         
-        # Commit type selector (for conventional commits)
         type_frame = tk.Frame(dialog, bg=self.colors['bg'])
         type_frame.pack(pady=8)
         
@@ -1446,7 +1607,7 @@ class GitHubUploaderGUI:
                 time.sleep(0.5)
 
                 if not self.uploader.git_add_all():
-                    raise Exception("Git add failed")
+                    raise Exception("Git add failed - Check logs for details")
 
                 self.root.after(0, lambda: update_status("💾 Committing changes..."))
                 time.sleep(0.5)
@@ -1458,7 +1619,7 @@ class GitHubUploaderGUI:
                 time.sleep(0.5)
 
                 if not self.uploader.git_push():
-                    raise Exception("Push failed")
+                    raise Exception("Push failed - Check credentials and network")
 
                 try:
                     if progress.winfo_exists():
@@ -1476,18 +1637,18 @@ class GitHubUploaderGUI:
                     ))
                     
             except Exception as e:
+                error_msg = str(e)
                 try:
                     if progress.winfo_exists():
                         progress.destroy()
                 except Exception:
                     pass
-                self.root.after(0, lambda: messagebox.showerror(
+                self.root.after(0, lambda msg=error_msg: messagebox.showerror(
                     self.t('error'), 
-                    f"{self.t('upload_failed')}: {str(e)}"
+                    f"{self.t('upload_failed')}: {msg}"
                 ))
 
         Thread(target=do_upload, daemon=True).start()
-
     def show_git_status(self):
         self.uploader.show_git_status()
 
