@@ -31,6 +31,7 @@ import base64
 from tkinter import filedialog
 import ctypes
 from threading import Event
+import math
 
 # Language translations
 TRANSLATIONS = {
@@ -1165,8 +1166,1051 @@ class StatusPanel(tk.Frame):
             pass
 
 
+class SecurityManager:
+    """Quản lý bảo mật và mã hóa"""
+    
+    def __init__(self):
+        self.key_file = Path.home() / '.github_uploader' / '.key'
+        self.key = self._get_or_create_key()
+        self.cipher = Fernet(self.key)
+    
+    def _get_or_create_key(self):
+        """Tạo hoặc lấy key mã hóa"""
+        try:
+            if self.key_file.exists():
+                with open(self.key_file, 'rb') as f:
+                    return f.read()
+            else:
+                key = Fernet.generate_key()
+                self.key_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.key_file, 'wb') as f:
+                    f.write(key)
+                try:
+                    os.chmod(self.key_file, 0o600)
+                except Exception:
+                    pass
+                return key
+        except Exception:
+            return Fernet.generate_key()
+    
+    def encrypt(self, text: str) -> str:
+        """Mã hóa văn bản"""
+        try:
+            if not text:
+                return ""
+            return self.cipher.encrypt(text.encode()).decode()
+        except Exception:
+            return text
+    
+    def decrypt(self, encrypted_text: str) -> str:
+        """Giải mã văn bản"""
+        try:
+            if not encrypted_text:
+                return ""
+            return self.cipher.decrypt(encrypted_text.encode()).decode()
+        except Exception:
+            return encrypted_text
+    
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash mật khẩu"""
+        return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+class NotificationManager:
+    """Quản lý thông báo hệ thống"""
+    
+    def __init__(self, app_name: str = "GitHub Uploader"):
+        self.app_name = app_name
+    
+    def send(self, title: str, message: str, timeout: int = 5):
+        """Gửi thông báo (best-effort)"""
+        try:
+            notification.notify(
+                title=title,
+                message=message,
+                app_name=self.app_name,
+                timeout=timeout,
+                app_icon=None
+            )
+        except Exception:
+            pass
+
+
+class GitHubUploader:
+    """Core class xử lý Git operations"""
+    
+    def __init__(self):
+        self.config_file = Path.home() / '.github_uploader' / 'config.json'
+        self.profiles_file = Path.home() / '.github_uploader' / 'profiles.json'
+        self.log_dir = Path.home() / '.github_uploader' / 'logs'
+        self.status_file = Path.home() / '.github_uploader' / 'status.json'
+        self.bg_pid_file = Path.home() / '.github_uploader' / 'background.pid'
+        self.settings_file = Path.home() / '.github_uploader' / 'settings.json'
+        self.auth_file = Path.home() / '.github_uploader' / 'auth.json'
+        
+        self.config_file.parent.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.security = SecurityManager()
+        self.notifier = NotificationManager()
+        
+        log_path = self.log_dir / f'upload_{datetime.now().strftime("%Y%m%d")}.log'
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        if not logger.handlers:
+            handler = RotatingFileHandler(log_path, maxBytes=2*1024*1024, backupCount=5, encoding='utf-8')
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.addHandler(logging.StreamHandler())
+        self.logger = logger
+        
+        # FIX 1: Load settings BEFORE load_config và load_auth
+        self.load_settings()
+        self.load_config()
+        self.load_auth()
+        
+        # FIX 2: Initialize github_token và github_username nếu chưa có
+        if not hasattr(self, 'github_token'):
+            self.github_token = ''
+        if not hasattr(self, 'github_username'):
+            self.github_username = ''
+
+    def load_settings(self):
+        """Load app settings"""
+        try:
+            if self.settings_file.exists():
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                    self.minimize_to_tray = settings.get('minimize_to_tray', True)
+                    self.show_notifications = settings.get('show_notifications', True)
+                    self.play_sound = settings.get('play_sound', False)
+                    self.start_with_windows = settings.get('start_with_windows', False)
+                    self.start_minimized = settings.get('start_minimized', False)
+                    self.theme_name = settings.get('theme_name', 'GitHub Dark')
+                    self.custom_theme = settings.get('custom_theme', None)
+                    self.language = settings.get('language', 'en')
+                    self.silent_mode = settings.get('silent_mode', False)
+                    self.auto_pull = settings.get('auto_pull', True)
+                    self.auto_resolve = settings.get('auto_resolve', True)
+                    self.app_password = settings.get('app_password', None)
+                    self.remember_credentials = settings.get('remember_credentials', False)
+            else:
+                self.minimize_to_tray = True
+                self.show_notifications = True
+                self.play_sound = False
+                self.start_with_windows = False
+                self.start_minimized = False
+                self.theme_name = 'GitHub Dark'
+                self.custom_theme = None
+                self.language = 'en'
+                self.silent_mode = False
+                self.auto_pull = True
+                self.auto_resolve = True
+                self.app_password = None
+                self.remember_credentials = False
+                self.save_settings()
+        except Exception as e:
+            self.logger.error(f"Error loading settings: {e}")
+
+    def save_settings(self):
+        """Save app settings"""
+        try:
+            settings = {
+                'minimize_to_tray': self.minimize_to_tray,
+                'show_notifications': self.show_notifications,
+                'play_sound': self.play_sound,
+                'start_with_windows': self.start_with_windows,
+                'start_minimized': self.start_minimized,
+                'theme_name': self.theme_name,
+                'custom_theme': self.custom_theme,
+                'language': self.language,
+                'silent_mode': self.silent_mode,
+                'auto_pull': self.auto_pull,
+                'auto_resolve': self.auto_resolve,
+                'app_password': self.app_password,
+                'remember_credentials': self.remember_credentials
+            }
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=4, ensure_ascii=False)
+            
+            self._update_windows_startup()
+            
+            self.logger.info("Settings saved successfully")
+        except Exception as e:
+            self.logger.error(f"Error saving settings: {e}")
+
+    def load_auth(self):
+        """Load authentication"""
+        try:
+            if self.auth_file.exists() and self.remember_credentials:
+                with open(self.auth_file, 'r', encoding='utf-8') as f:
+                    auth = json.load(f)
+                    self.github_token = self.security.decrypt(auth.get('token', ''))
+                    self.github_username = self.security.decrypt(auth.get('username', ''))
+            else:
+                self.github_token = ''
+                self.github_username = ''
+        except Exception as e:
+            self.logger.error(f"Error loading auth: {e}")
+            self.github_token = ''
+            self.github_username = ''
+
+    def save_auth(self):
+        """Save authentication"""
+        try:
+            if self.remember_credentials and getattr(self, 'github_token', None):
+                auth = {
+                    'token': self.security.encrypt(self.github_token),
+                    'username': self.security.encrypt(self.github_username)
+                }
+                with open(self.auth_file, 'w', encoding='utf-8') as f:
+                    json.dump(auth, f, indent=4)
+            else:
+                if self.auth_file.exists():
+                    self.auth_file.unlink()
+        except Exception as e:
+            self.logger.error(f"Error saving auth: {e}")
+
+    def _update_windows_startup(self):
+        """Cập nhật startup với Windows (best-effort)"""
+        try:
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            app_name = "GitHubAutoUpload"
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_ALL_ACCESS)
+            if self.start_with_windows:
+                exe_path = sys.executable
+                script_path = os.path.abspath(__file__)
+                value = f'"{exe_path}" "{script_path}"'
+                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, value)
+            else:
+                try:
+                    winreg.DeleteValue(key, app_name)
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+        except Exception as e:
+            self.logger.debug(f"Error updating startup (ignored): {e}")
+
+    def load_config(self):
+        """Load cấu hình từ file"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    self.repo_path = config.get('repo_path', '')
+                    self.remote_url = config.get('remote_url', '')
+                    self.branch = config.get('branch', 'main')
+                    self.auto_upload_interval = config.get('auto_upload_interval', 30)
+                    self.commit_message_template = config.get('commit_message_template', 
+                                                             'Update: {datetime}')
+                    self.current_profile = config.get('current_profile', 'default')
+                    self.commit_mode = config.get('commit_mode', 'always')
+                    self.last_commit_date = config.get('last_commit_date', '')
+                    self.use_conventional_commits = config.get('use_conventional_commits', False)
+            else:
+                self.repo_path = ''
+                self.remote_url = ''
+                self.branch = 'main'
+                self.auto_upload_interval = 30
+                self.commit_message_template = 'Update: {datetime}'
+                self.current_profile = 'default'
+                self.commit_mode = 'always'
+                self.last_commit_date = ''
+                self.use_conventional_commits = False
+                self.save_config()
+        except Exception as e:
+            self.logger.error(f"Error loading config: {e}")
+
+    def save_config(self):
+        """Lưu cấu hình vào file"""
+        try:
+            config = {
+                'repo_path': self.repo_path,
+                'remote_url': self.remote_url,
+                'branch': self.branch,
+                'auto_upload_interval': self.auto_upload_interval,
+                'commit_message_template': self.commit_message_template,
+                'current_profile': self.current_profile,
+                'commit_mode': self.commit_mode,
+                'last_commit_date': self.last_commit_date,
+                'use_conventional_commits': self.use_conventional_commits
+            }
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+            self.logger.info("Config saved successfully")
+        except Exception as e:
+            self.logger.error(f"Error saving config: {e}")
+
+    def run_command(self, command: str):
+        """Chạy command và trả về output - improved version"""
+        try:
+            # Kiểm tra repo path trước
+            if self.repo_path and not Path(self.repo_path).exists():
+                self.logger.error(f"Repository path doesn't exist: {self.repo_path}")
+                return None
+            
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=self.repo_path if self.repo_path else None,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                encoding='utf-8',
+                errors='replace'
+            )
+            
+            if result.returncode != 0:
+                stderr = result.stderr.strip()
+                
+                # FIX: Auto-handle safe.directory error
+                if "fatal: detected dubious ownership" in stderr or \
+                   "is owned by" in stderr or \
+                   "safe.directory" in stderr:
+                    self.logger.warning("Detected safe.directory issue, attempting auto-fix...")
+                    if self._add_safe_directory():
+                        # Retry command
+                        self.logger.info("Retrying command after safe.directory fix...")
+                        retry_result = subprocess.run(
+                            command,
+                            shell=True,
+                            cwd=self.repo_path if self.repo_path else None,
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            encoding='utf-8',
+                            errors='replace'
+                        )
+                        if retry_result.returncode == 0:
+                            return retry_result.stdout.strip()
+                        stderr = retry_result.stderr.strip()
+                
+                # Log chi tiết error
+                self.logger.error(f"Command failed: {command}")
+                self.logger.error(f"Exit code: {result.returncode}")
+                self.logger.error(f"Error output: {stderr}")
+                
+                # Kiểm tra các lỗi cụ thể khác
+                if "not a git repository" in stderr.lower():
+                    self.logger.error("Not a git repository. Please initialize git first.")
+                elif "permission denied" in stderr.lower():
+                    self.logger.error("Permission denied. Check file permissions.")
+                elif "fatal: pathspec" in stderr.lower():
+                    self.logger.error("Invalid file path or pattern.")
+                
+                return None
+            
+            return result.stdout.strip()
+            
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"Command timeout (120s): {command}")
+            return None
+        except FileNotFoundError:
+            self.logger.error(f"Git command not found. Is Git installed?")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error running command '{command}': {e}")
+            return None
+
+    def _git(self, args: str):
+        """Wrapper cho git commands"""
+        return self.run_command(f"git {args}")
+
+    def git_pull(self) -> bool:
+        """Git pull từ remote"""
+        try:
+            if not self.auto_pull:
+                return True
+            
+            self.logger.info("Pulling latest changes...")
+            result = self._git(f"pull origin {self.branch}")
+            
+            if result is None:
+                if self.auto_resolve:
+                    self.logger.info("Attempting auto-resolve...")
+                    self._git("checkout --ours .")
+                    self._git("add .")
+                    return True
+                return False
+            
+            self.logger.info("Pull successful")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error pulling: {e}")
+            return False
+
+    def show_git_status(self):
+        """Hiển thị Git status"""
+        try:
+            status = self._git("status")
+            if status:
+                messagebox.showinfo("Git Status", status)
+            else:
+                messagebox.showerror("Error", "Cannot get Git status or repository not initialized")
+        except Exception as e:
+            self.logger.error(f"Error showing status: {e}")
+            messagebox.showerror("Error", str(e))
+
+    def create_gitignore(self):
+        """Tạo file .gitignore"""
+        try:
+            if not self.repo_path:
+                messagebox.showerror("Error", "Repository not configured!")
+                return
+            
+            gitignore_path = Path(self.repo_path) / '.gitignore'
+            default_content = """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Config
+config.json
+*.env
+"""
+            
+            if gitignore_path.exists():
+                response = messagebox.askyesno("Confirm", 
+                    ".gitignore already exists. Overwrite?")
+                if not response:
+                    return
+            
+            with open(gitignore_path, 'w', encoding='utf-8') as f:
+                f.write(default_content)
+            
+            messagebox.showinfo("Success", ".gitignore created")
+            self.logger.info(".gitignore created")
+        except Exception as e:
+            self.logger.error(f"Error creating .gitignore: {e}")
+            messagebox.showerror("Error", str(e))
+
+    def git_add_all(self) -> bool:
+        """Git add tất cả files - improved error handling"""
+        try:
+            # Kiểm tra repo path
+            if not self.repo_path or not Path(self.repo_path).exists():
+                self.logger.error("Repository path not configured or doesn't exist")
+                return False
+            
+            # Kiểm tra có phải git repo không
+            git_dir = Path(self.repo_path) / '.git'
+            if not git_dir.exists():
+                self.logger.error("Not a git repository")
+                return False
+            
+            # FIX: Kiểm tra và fix safe.directory issue
+            if not self._ensure_safe_directory():
+                self.logger.error("Failed to configure safe directory")
+                return False
+            
+            # Kiểm tra có files để add không
+            status = self._git("status --porcelain")
+            if status is None:
+                self.logger.error("Failed to get git status")
+                return False
+            
+            if not status.strip():
+                self.logger.info("No files to add")
+                return True  # Not an error, just nothing to add
+            
+            # Thử add với verbose output
+            result = self._git("add -A -v")
+            if result is None:
+                # Thử phương án khác
+                self.logger.warning("'git add -A' failed, trying 'git add .'")
+                result = self._git("add .")
+                if result is None:
+                    self.logger.error("Both 'git add' methods failed")
+                    return False
+            
+            self.logger.info(f"Successfully added files: {len(status.strip().split(chr(10)))} file(s)")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error adding files: {e}")
+            return False
+
+    def _ensure_safe_directory(self) -> bool:
+        """Đảm bảo repo path được add vào safe.directory"""
+        try:
+            # Kiểm tra xem đã được add chưa
+            result = self.run_command("git config --global --get-all safe.directory")
+            
+            if result is None:
+                # Config chưa có, add luôn
+                return self._add_safe_directory()
+            
+            # Chuẩn hóa path để so sánh
+            repo_path_normalized = str(Path(self.repo_path).resolve()).replace('\\', '/')
+            
+            # Kiểm tra xem repo path đã có trong list chưa
+            safe_dirs = result.split('\n') if result else []
+            safe_dirs_normalized = [d.replace('\\', '/') for d in safe_dirs]
+            
+            if repo_path_normalized not in safe_dirs_normalized:
+                return self._add_safe_directory()
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking safe.directory: {e}")
+            return self._add_safe_directory()
+
+    def _add_safe_directory(self) -> bool:
+        """Add repo path vào safe.directory"""
+        try:
+            # Normalize path
+            repo_path = str(Path(self.repo_path).resolve()).replace('\\', '/')
+            
+            # Add to global config
+            result = self.run_command(f'git config --global --add safe.directory "{repo_path}"')
+            
+            if result is not None or self.run_command("git status") is not None:
+                self.logger.info(f"Added safe.directory: {repo_path}")
+                return True
+            
+            # Fallback: thử với wildcard
+            self.logger.warning("Trying wildcard safe.directory")
+            result = self.run_command('git config --global --add safe.directory "*"')
+            
+            if result is not None or self.run_command("git status") is not None:
+                self.logger.info("Added wildcard safe.directory")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error adding safe.directory: {e}")
+            return False
+
+    def git_commit(self, message: str) -> bool:
+        """Git commit với message - improved version"""
+        try:
+            # Kiểm tra xem có thay đổi không
+            status = self._git("status --porcelain")
+            if not status:
+                self.logger.info("No changes to commit")
+                if self.show_notifications and not self.silent_mode:
+                    self.notifier.send("No Changes", "Working directory clean")
+                return False
+            
+            today = datetime.now().strftime("%Y-%m-%d")
+            
+            # Kiểm tra commit mode
+            if self.commit_mode == 'daily':
+                if self.last_commit_date == today:
+                    self.logger.info("Already committed today (daily mode)")
+                    if self.show_notifications and not self.silent_mode:
+                        self.notifier.send("Daily Limit", "Already committed today")
+                    return False
+            elif self.commit_mode == 'manual':
+                if not message:
+                    self.logger.info("Manual mode - message required")
+                    return False
+            
+            # Tạo commit message
+            if not message or message.strip() == "":
+                if self.use_conventional_commits:
+                    commit_type = self._detect_commit_type(status)
+                    message = f"{commit_type}: Auto update - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                else:
+                    message = self.commit_message_template.format(
+                        datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        date=datetime.now().strftime("%Y-%m-%d"),
+                        time=datetime.now().strftime("%H:%M:%S"),
+                        user=os.environ.get('USERNAME', 'user')
+                    )
+            
+            # Escape quotes
+            message = message.replace('"', '\\"').replace("'", "\\'")
+            
+            # Commit với retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    result = self._git(f'commit -m "{message}"')
+                    if result is not None:
+                        self.last_commit_date = today
+                        self.save_config()
+                        
+                        # Đếm số files đã commit
+                        files_changed = len(status.strip().split('\n'))
+                        
+                        self.logger.info(f"Committed: {message} ({files_changed} files)")
+                        
+                        if self.show_notifications and not self.silent_mode:
+                            self.notifier.send(
+                                "✅ Commit Success", 
+                                f"{files_changed} file(s) committed\n{message[:50]}..."
+                            )
+                        
+                        return True
+                    elif attempt < max_retries - 1:
+                        time.sleep(1)
+                        continue
+                    else:
+                        return False
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(f"Commit attempt {attempt+1} failed: {e}")
+                        time.sleep(1)
+                    else:
+                        raise
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error committing: {e}")
+            if self.show_notifications and not self.silent_mode:
+                self.notifier.send("❌ Commit Failed", str(e))
+            return False
+
+    def _detect_commit_type(self, status: str) -> str:
+        """Detect conventional commit type based on changes"""
+        lines = status.strip().split('\n')
+        
+        # Check for new files
+        if any(line.startswith('??') or line.startswith('A ') for line in lines):
+            return "feat"
+        
+        # Check for deletions
+        if any(line.startswith('D ') for line in lines):
+            return "refactor"
+        
+        # Check for modifications
+        if any(line.startswith('M ') for line in lines):
+            # Check if it's documentation
+            if any('.md' in line or 'README' in line for line in lines):
+                return "docs"
+            # Check if it's config
+            if any(('.json' in line or '.yaml' in line or '.yml' in line or '.toml' in line) for line in lines):
+                return "chore"
+            return "fix"
+        
+        return "chore"
+
+    def git_push(self) -> bool:
+        """Git push lên remote - improved with auto-pull retry"""
+        try:
+            result = self._git(f"push -u origin {self.branch}")
+            if result is not None:
+                self.logger.info(f"Pushed to {self.branch}")
+                
+                if self.show_notifications and not self.silent_mode:
+                    self.notifier.send("✅ Push Success", f"Pushed to {self.branch}")
+                
+                return True
+            
+            # Kiểm tra xem có phải non-fast-forward error không
+            stderr_check = self.run_command(f"git push -u origin {self.branch} 2>&1")
+            if stderr_check and ("non-fast-forward" in stderr_check or "rejected" in stderr_check):
+                self.logger.warning("Push rejected: local branch behind remote. Auto-pulling and retrying...")
+                
+                if self.auto_pull and self.git_pull():
+                    # Retry push sau khi pull thành công
+                    retry_result = self._git(f"push -u origin {self.branch}")
+                    if retry_result is not None:
+                        self.logger.info(f"Pushed to {self.branch} (after auto-pull)")
+                        if self.show_notifications and not self.silent_mode:
+                            self.notifier.send("✅ Push Success", f"Pushed to {self.branch} (after pull)")
+                        return True
+                
+                self.logger.error("Push failed even after pull attempt")
+                return False
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error pushing: {e}")
+            if self.show_notifications and not self.silent_mode:
+                self.notifier.send("❌ Push Failed", str(e)[:100])
+            return False
+
+    def load_profiles(self):
+        """Load saved profiles"""
+        try:
+            if self.profiles_file.exists():
+                with open(self.profiles_file, 'r', encoding='utf-8') as f:
+                    self.profiles = json.load(f)
+            else:
+                self.profiles = {
+                    'default': {
+                        'repo_path': '',
+                        'remote_url': '',
+                        'branch': 'main'
+                    }
+                }
+                self.save_profiles()
+        except Exception as e:
+            self.logger.error(f"Error loading profiles: {e}")
+            self.profiles = {'default': {}}
+
+    def save_profiles(self):
+        """Save profiles"""
+        try:
+            with open(self.profiles_file, 'w', encoding='utf-8') as f:
+                json.dump(self.profiles, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            self.logger.error(f"Error saving profiles: {e}")
+
+    def get_profile(self, name: str) -> dict:
+        """Get specific profile"""
+        return self.profiles.get(name, {})
+
+    def save_profile(self, name: str, config: dict):
+        """Save specific profile"""
+        try:
+            self.profiles[name] = config
+            self.save_profiles()
+            self.logger.info(f"Profile saved: {name}")
+        except Exception as e:
+            self.logger.error(f"Error saving profile: {e}")
+
+    def delete_profile(self, name: str):
+        """Delete profile"""
+        try:
+            if name in self.profiles and name != 'default':
+                del self.profiles[name]
+                self.save_profiles()
+                self.logger.info(f"Profile deleted: {name}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error deleting profile: {e}")
+            return False
+
+class AnimationManager:
+    """Quản lý các hiệu ứng animation"""
+    
+    def __init__(self):
+        self.animations = {}
+        self.animation_speed = 0.15  # tốc độ animation (0-1)
+    
+    def animate_color(self, widget, start_color: str, end_color: str, 
+                     duration: int = 200, callback=None):
+        """Animate color transition"""
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        def rgb_to_hex(rgb):
+            return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        
+        start_rgb = hex_to_rgb(start_color)
+        end_rgb = hex_to_rgb(end_color)
+        
+        steps = max(1, duration // 16)  # ~60 FPS
+        
+        for step in range(steps + 1):
+            progress = step / steps
+            # Ease-out cubic
+            eased = 1 - (1 - progress) ** 3
+            
+            current_rgb = tuple(
+                start_rgb[i] + (end_rgb[i] - start_rgb[i]) * eased
+                for i in range(3)
+            )
+            
+            widget.after(int(step * duration / steps), 
+                        lambda c=rgb_to_hex(current_rgb): widget.config(bg=c))
+        
+        if callback:
+            widget.after(duration, callback)
+    
+    def animate_scale(self, widget, start_scale: float, end_scale: float,
+                     duration: int = 200, callback=None):
+        """Animate scale effect (using relief and bd)"""
+        steps = max(1, duration // 16)
+        
+        for step in range(steps + 1):
+            progress = step / steps
+            # Ease-out cubic
+            eased = 1 - (1 - progress) ** 3
+            scale = start_scale + (end_scale - start_scale) * eased
+            
+            widget.after(int(step * duration / steps))
+        
+        if callback:
+            widget.after(duration, callback)
+
+
+class AnimatedButton(tk.Button):
+    """Button with smooth animations"""
+    
+    def __init__(self, parent, **kwargs):
+        self.normal_bg = kwargs.get('bg', '#58a6ff')
+        self.hover_bg = self._lighten_color(self.normal_bg, 1.2)
+        self.press_bg = self._darken_color(self.normal_bg, 0.8)
+        
+        self.animation_id = None
+        
+        super().__init__(parent, **kwargs)
+        
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<ButtonPress-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
+    
+    @staticmethod
+    def _lighten_color(hex_color: str, factor: float) -> str:
+        """Lighten color"""
+        hex_color = hex_color.lstrip('#')
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        r = int(min(255, r * factor))
+        g = int(min(255, g * factor))
+        b = int(min(255, b * factor))
+        return '#{:02x}{:02x}{:02x}'.format(r, g, b)
+    
+    @staticmethod
+    def _darken_color(hex_color: str, factor: float) -> str:
+        """Darken color"""
+        hex_color = hex_color.lstrip('#')
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        r = int(r * factor)
+        g = int(g * factor)
+        b = int(b * factor)
+        return '#{:02x}{:02x}{:02x}'.format(r, g, b)
+    
+    def _animate_bg(self, start_color: str, end_color: str, duration: int = 150):
+        """Animate background color smoothly"""
+        if self.animation_id:
+            self.after_cancel(self.animation_id)
+        
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        def rgb_to_hex(rgb):
+            return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        
+        start_rgb = hex_to_rgb(start_color)
+        end_rgb = hex_to_rgb(end_color)
+        
+        steps = 8
+        current_step = [0]
+        
+        def animate():
+            if current_step[0] <= steps:
+                progress = current_step[0] / steps
+                # Easing function - ease-in-out cubic
+                if progress < 0.5:
+                    eased = 4 * progress ** 3
+                else:
+                    eased = 1 - (-2 * progress + 2) ** 3 / 2
+                
+                current_rgb = tuple(
+                    start_rgb[i] + (end_rgb[i] - start_rgb[i]) * eased
+                    for i in range(3)
+                )
+                
+                self.config(bg=rgb_to_hex(current_rgb))
+                current_step[0] += 1
+                self.animation_id = self.after(duration // steps, animate)
+        
+        animate()
+    
+    def _on_enter(self, event):
+        """Mouse enter animation"""
+        self._animate_bg(self.normal_bg, self.hover_bg)
+        self.config(relief='raised', bd=2)
+    
+    def _on_leave(self, event):
+        """Mouse leave animation"""
+        self._animate_bg(self.hover_bg, self.normal_bg)
+        self.config(relief='flat', bd=0)
+    
+    def _on_press(self, event):
+        """Mouse press animation"""
+        self._animate_bg(self.hover_bg, self.press_bg)
+        self.config(relief='sunken', bd=3)
+    
+    def _on_release(self, event):
+        """Mouse release animation"""
+        self._animate_bg(self.press_bg, self.hover_bg)
+        self.config(relief='raised', bd=2)
+
+
+class AnimatedLabel(tk.Label):
+    """Label with fade-in animation"""
+    
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.animation_id = None
+    
+    def fade_in(self, duration: int = 300):
+        """Fade in effect"""
+        if self.animation_id:
+            self.after_cancel(self.animation_id)
+        
+        original_fg = self.cget('fg')
+        bg = self.cget('bg')
+        
+        # Convert to RGB for fading
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        def rgb_to_hex(rgb):
+            return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        
+        try:
+            fg_rgb = hex_to_rgb(original_fg)
+            bg_rgb = hex_to_rgb(bg)
+        except:
+            return
+        
+        steps = 10
+        current_step = [0]
+        
+        def animate():
+            if current_step[0] <= steps:
+                progress = current_step[0] / steps
+                # Ease-out cubic
+                eased = 1 - (1 - progress) ** 3
+                
+                current_rgb = tuple(
+                    bg_rgb[i] + (fg_rgb[i] - bg_rgb[i]) * eased
+                    for i in range(3)
+                )
+                
+                self.config(fg=rgb_to_hex(current_rgb))
+                current_step[0] += 1
+                self.animation_id = self.after(duration // steps, animate)
+        
+        animate()
+    
+    def pulse(self, times: int = 2, duration: int = 500):
+        """Pulse effect"""
+        original_fg = self.cget('fg')
+        
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        def rgb_to_hex(rgb):
+            return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        
+        try:
+            fg_rgb = hex_to_rgb(original_fg)
+        except:
+            return
+        
+        for i in range(times * 2):
+            is_dim = i % 2 == 0
+            alpha = 0.4 if is_dim else 1.0
+            
+            dim_rgb = tuple(int(c * alpha) for c in fg_rgb)
+            
+            self.after(int(i * duration / (times * 2)), 
+                      lambda c=rgb_to_hex(dim_rgb): self.config(fg=c))
+        
+        self.after(duration, lambda: self.config(fg=original_fg))
+
+
+class AnimatedFrame(tk.Frame):
+    """Frame with slide animation"""
+    
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.animation_id = None
+    
+    def slide_in(self, direction: str = 'top', duration: int = 300):
+        """Slide in animation (top, bottom, left, right)"""
+        if self.animation_id:
+            self.after_cancel(self.animation_id)
+        
+        self.pack(side='top', fill='x', expand=True)
+        
+        # Store original height
+        self.update_idletasks()
+        height = self.winfo_height()
+        
+        if direction == 'top':
+            self.config(height=0)
+        
+        steps = 12
+        current_step = [0]
+        
+        def animate():
+            if current_step[0] <= steps:
+                progress = current_step[0] / steps
+                # Ease-out cubic
+                eased = 1 - (1 - progress) ** 3
+                
+                new_height = int(height * eased)
+                self.config(height=new_height)
+                
+                current_step[0] += 1
+                self.animation_id = self.after(duration // steps, animate)
+        
+        animate()
+    
+    def fade_in(self, duration: int = 300):
+        """Fade in animation"""
+        if self.animation_id:
+            self.after_cancel(self.animation_id)
+        
+        original_bg = self.cget('bg')
+        
+        def hex_to_rgb(hex_color):
+            hex_color = hex_color.lstrip('#')
+            return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        def rgb_to_hex(rgb):
+            return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        
+        try:
+            bg_rgb = hex_to_rgb(original_bg)
+        except:
+            return
+        
+        # Start from transparent (darker)
+        start_rgb = tuple(int(c * 0.3) for c in bg_rgb)
+        
+        steps = 10
+        current_step = [0]
+        
+        def animate():
+            if current_step[0] <= steps:
+                progress = current_step[0] / steps
+                eased = 1 - (1 - progress) ** 3
+                
+                current_rgb = tuple(
+                    start_rgb[i] + (bg_rgb[i] - start_rgb[i]) * eased
+                    for i in range(3)
+                )
+                
+                self.config(bg=rgb_to_hex(current_rgb))
+                current_step[0] += 1
+                self.animation_id = self.after(duration // steps, animate)
+        
+        animate()
+
+
+# Bây giờ cập nhật GitHubUploaderGUI để sử dụng AnimatedButton
+
 class GitHubUploaderGUI:
-    """Main GUI Application - Enhanced"""
+    """Main GUI Application - Enhanced with Animations"""
     
     def __init__(self, root):
         self.root = root
@@ -1176,6 +2220,7 @@ class GitHubUploaderGUI:
         
         self.uploader = GitHubUploader()
         self.uploader.load_profiles()
+        self.animation_manager = AnimationManager()
         
         # Animation variables
         self.upload_in_progress = False
@@ -1278,7 +2323,7 @@ class GitHubUploaderGUI:
         ]
         
         for text, command, color, emoji in buttons:
-            btn = tk.Button(
+            btn = AnimatedButton(
                 btn_frame,
                 text=f"{emoji} {text}",
                 command=command,
@@ -1293,24 +2338,6 @@ class GitHubUploaderGUI:
                 activeforeground='white'
             )
             btn.pack(side='left', padx=6, expand=True, fill='both')
-            
-            # Hover effect
-            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
-            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
-    
-    def on_button_enter(self, btn):
-        """Button hover effect"""
-        try:
-            btn.config(relief='raised', bd=2)
-        except:
-            pass
-    
-    def on_button_leave(self, btn):
-        """Button leave effect"""
-        try:
-            btn.config(relief='flat', bd=0)
-        except:
-            pass
     
     def create_config_section(self, parent):
         """Create configuration section"""
@@ -1338,7 +2365,7 @@ class GitHubUploaderGUI:
         ]
         
         for text, command, color, emoji in buttons:
-            btn = tk.Button(
+            btn = AnimatedButton(
                 btn_frame,
                 text=f"{emoji} {text}",
                 command=command,
@@ -1353,9 +2380,6 @@ class GitHubUploaderGUI:
                 activeforeground='white'
             )
             btn.pack(side='left', padx=4, expand=True, fill='both')
-            
-            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
-            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def create_bg_section(self, parent):
         """Create background mode section"""
@@ -1382,7 +2406,7 @@ class GitHubUploaderGUI:
         ]
         
         for text, command, color, emoji in buttons:
-            btn = tk.Button(
+            btn = AnimatedButton(
                 btn_frame,
                 text=f"{emoji} {text}",
                 command=command,
@@ -1397,9 +2421,6 @@ class GitHubUploaderGUI:
                 activeforeground='white'
             )
             btn.pack(side='left', padx=4, expand=True, fill='both')
-            
-            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
-            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def create_utilities_section(self, parent):
         """Create utilities section"""
@@ -1425,7 +2446,7 @@ class GitHubUploaderGUI:
         ]
         
         for text, command, color, emoji in buttons:
-            btn = tk.Button(
+            btn = AnimatedButton(
                 btn_frame,
                 text=f"{emoji} {text}",
                 command=command,
@@ -1440,9 +2461,6 @@ class GitHubUploaderGUI:
                 activeforeground='white'
             )
             btn.pack(side='left', padx=4, expand=True, fill='both')
-            
-            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
-            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def setup_tray(self):
         """Setup system tray"""
@@ -1854,195 +2872,260 @@ class GitHubUploaderGUI:
 
 
 class ProfileDialog(tk.Toplevel):
-    """Dialog để quản lý profiles"""
+    """Profile management dialog"""
     
     def __init__(self, parent, uploader: GitHubUploader):
-        super().__init__(parent.root)
-        self.parent = parent
-        self.uploader = uploader
-        self.transient(parent.root)
-        self.grab_set()
+        super().__init__(parent)
         self.title("💾 Manage Profiles")
-        self.geometry("600x450")
+        self.geometry("600x400")
+        self.transient(parent)
+        self.grab_set()
+        self.uploader = uploader
         
-        try:
-            self.configure(bg=parent.colors['bg'])
-        except (AttributeError, KeyError):
-            self.configure(bg='#0d1117')
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        self.resizable(False, False)
+        # Center window
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - (600 // 2)
-        y = (self.winfo_screenheight() // 2) - (450 // 2)
-        self.geometry(f"600x450+{x}+{y}")
+        y = (self.winfo_screenheight() // 2) - (400 // 2)
+        self.geometry(f"600x400+{x}+{y}")
         
         self.create_widgets()
-
+        self.populate_profiles()
+    
     def create_widgets(self):
-        """Create profile management UI"""
-        tk.Label(self, text="💾 Manage Profiles", font=('Segoe UI', 14, 'bold'),
-                bg=self.parent.colors['bg'], fg=self.parent.colors['fg']).pack(pady=12)
+        """Create profile UI"""
+        # Title
+        tk.Label(self, text="💾 Manage GitHub Profiles",
+                font=('Segoe UI', 14, 'bold'),
+                bg='#0d1117', fg='#58a6ff').pack(pady=20)
         
-        # Profile list frame
-        list_frame = tk.Frame(self, bg=self.parent.colors['card'])
-        list_frame.pack(fill='both', expand=True, padx=12, pady=10)
+        # Profile list
+        self.profile_listbox = tk.Listbox(self, bg='#161b22', fg='#c9d1d9',
+                                          font=('Segoe UI', 10),
+                                          selectmode='single',
+                                          relief='flat')
+        self.profile_listbox.pack(fill='both', expand=True, padx=20, pady=(0, 10))
         
-        # Listbox with scrollbar
-        scrollbar = ttk.Scrollbar(list_frame)
-        scrollbar.pack(side='right', fill='y')
+        # Buttons
+        btn_frame = tk.Frame(self, bg='#0d1117')
+        btn_frame.pack(fill='x', padx=20, pady=(0, 20))
         
-        self.profile_listbox = tk.Listbox(
-            list_frame,
-            yscrollcommand=scrollbar.set,
-            bg=self.parent.colors['card'],
-            fg=self.parent.colors['fg'],
-            selectmode='single',
-            font=('Segoe UI', 10)
-        )
-        self.profile_listbox.pack(fill='both', expand=True, padx=8, pady=8)
-        scrollbar.config(command=self.profile_listbox.yview)
+        # Add profile button
+        tk.Button(btn_frame, text="➕ Add Profile",
+                 command=self.add_profile,
+                 bg='#3fb950', fg='white',
+                 font=('Segoe UI', 10, 'bold'),
+                 relief='flat', cursor='hand2',
+                 padx=20, pady=8).pack(side='left', padx=4, expand=True, fill='both')
         
-        # Load profiles
-        self.refresh_list()
+        # Edit profile button
+        tk.Button(btn_frame, text="✏️ Edit Profile",
+                 command=self.edit_profile,
+                 bg='#007bff', fg='white',
+                 font=('Segoe UI', 10, 'bold'),
+                 relief='flat', cursor='hand2',
+                 padx=20, pady=8).pack(side='left', padx=4, expand=True, fill='both')
         
-        # Button frame
-        btn_frame = tk.Frame(self, bg=self.parent.colors['bg'])
-        btn_frame.pack(fill='x', padx=12, pady=12)
+        # Delete profile button
+        tk.Button(btn_frame, text="🗑️ Delete Profile",
+                 command=self.delete_profile,
+                 bg='#f85149', fg='white',
+                 font=('Segoe UI', 10, 'bold'),
+                 relief='flat', cursor='hand2',
+                 padx=20, pady=8).pack(side='left', padx=4, expand=True, fill='both')
         
-        buttons = [
-            ("➕ New", self.new_profile, self.parent.colors['success']),
-            ("✏️ Edit", self.edit_profile, self.parent.colors['accent']),
-            ("🔄 Load", self.load_profile, self.parent.colors['warning']),
-            ("🗑️ Delete", self.delete_profile, self.parent.colors['danger']),
-        ]
-        
-        for text, cmd, color in buttons:
-            tk.Button(btn_frame, text=text, command=cmd,
-                     bg=color, fg='white',
-                     font=('Segoe UI', 9, 'bold'), relief='flat',
-                     cursor='hand2', padx=12, pady=6).pack(side='left', padx=4)
-        
-        tk.Button(btn_frame, text="✅ Close", command=self.destroy,
-                 bg=self.parent.colors['fg_tertiary'], fg='white',
-                 font=('Segoe UI', 9, 'bold'), relief='flat',
-                 cursor='hand2', padx=12, pady=6).pack(side='right', padx=4)
-
-    def refresh_list(self):
-        """Refresh profile list"""
-        self.profile_listbox.delete(0, 'end')
-        current = self.uploader.current_profile
-        for i, name in enumerate(self.uploader.profiles.keys()):
-            label = f"⭐ {name}" if name == current else f"  {name}"
-            self.profile_listbox.insert(i, label)
-
-    def new_profile(self):
-        """Create new profile"""
-        name = simpledialog.askstring("New Profile", "Enter profile name:", parent=self)
-        if not name:
-            return
-        
-        if name in self.uploader.profiles:
-            messagebox.showwarning("Error", "Profile already exists", parent=self)
-            return
-        
-        self._edit_profile_dialog(name, {})
-
+        # Close button
+        tk.Button(self, text="🚪 Close",
+                 command=self.on_close,
+                 bg='#6c757d', fg='white',
+                 font=('Segoe UI', 10, 'bold'),
+                 relief='flat', cursor='hand2',
+                 padx=20, pady=8).pack(side='bottom', fill='x', padx=20, pady=(0, 10))
+    
+    def populate_profiles(self):
+        """Load and display profiles"""
+        try:
+            self.profile_listbox.delete(0, tk.END)
+            for name, config in self.uploader.profiles.items():
+                if name == 'default':
+                    continue
+                display_name = f"{name} - {config.get('repo_path', '')}"
+                self.profile_listbox.insert(tk.END, display_name)
+            
+            if not self.profile_listbox.size():
+                self.profile_listbox.insert(tk.END, "No profiles found. Add a new profile.")
+        except Exception as e:
+            self.uploader.logger.error(f"Error populating profiles: {e}")
+    
+    def add_profile(self):
+        """Add new profile"""
+        ProfileEditDialog(self, self.uploader, None)
+    
     def edit_profile(self):
         """Edit selected profile"""
-        selection = self.profile_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("Warning", "Select a profile first", parent=self)
-            return
-        
-        profile_name = list(self.uploader.profiles.keys())[selection[0]]
-        profile = self.uploader.get_profile(profile_name)
-        self._edit_profile_dialog(profile_name, profile)
-
-    def _edit_profile_dialog(self, profile_name: str, profile: dict):
-        """Edit profile dialog"""
-        dialog = tk.Toplevel(self)
-        dialog.title(f"Edit Profile: {profile_name}")
-        dialog.geometry("400x300")
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.configure(bg=self.parent.colors['bg'])
-        
-        tk.Label(dialog, text=f"✏️ Edit Profile: {profile_name}", font=('Segoe UI', 12, 'bold'),
-                bg=self.parent.colors['bg'], fg=self.parent.colors['fg']).pack(pady=12)
-        
-        tk.Label(dialog, text="Repository Path:", bg=self.parent.colors['bg'],
-                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
-        repo_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
-                             fg=self.parent.colors['fg'], width=40)
-        repo_entry.insert(0, profile.get('repo_path', ''))
-        repo_entry.pack(padx=12, pady=4)
-        
-        tk.Label(dialog, text="Remote URL:", bg=self.parent.colors['bg'],
-                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
-        remote_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
-                               fg=self.parent.colors['fg'], width=40)
-        remote_entry.insert(0, profile.get('remote_url', ''))
-        remote_entry.pack(padx=12, pady=4)
-        
-        tk.Label(dialog, text="Branch:", bg=self.parent.colors['bg'],
-                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
-        branch_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
-                               fg=self.parent.colors['fg'], width=40)
-        branch_entry.insert(0, profile.get('branch', 'main'))
-        branch_entry.pack(padx=12, pady=4)
-        
-        def save():
-            self.uploader.save_profile(profile_name, {
-                'repo_path': repo_entry.get().strip(),
-                'remote_url': remote_entry.get().strip(),
-                'branch': branch_entry.get().strip() or 'main'
-            })
-            messagebox.showinfo("Success", f"Profile '{profile_name}' saved", parent=dialog)
-            dialog.destroy()
-            self.refresh_list()
-        
-        tk.Button(dialog, text="✅ Save", command=save,
-                 bg=self.parent.colors['success'], fg='white',
-                 font=('Segoe UI', 10, 'bold'), relief='flat',
-                 cursor='hand2', padx=16, pady=8).pack(pady=12)
-
-    def load_profile(self):
-        """Load selected profile"""
-        selection = self.profile_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("Warning", "Select a profile first", parent=self)
-            return
-        
-        profile_name = list(self.uploader.profiles.keys())[selection[0]]
-        profile = self.uploader.get_profile(profile_name)
-        
-        self.uploader.repo_path = profile.get('repo_path', '')
-        self.uploader.remote_url = profile.get('remote_url', '')
-        self.uploader.branch = profile.get('branch', 'main')
-        self.uploader.current_profile = profile_name
-        self.uploader.save_config()
-        
-        messagebox.showinfo("Success", f"Profile '{profile_name}' loaded", parent=self)
-        self.parent.refresh_ui()
-        self.refresh_list()
+        try:
+            selected = self.profile_listbox.curselection()
+            if not selected:
+                messagebox.showwarning("Warning", "No profile selected")
+                return
+            
+            index = selected[0]
+            profile_name = self.profile_listbox.get(index).split(' - ')[0]
+            profile = self.uploader.get_profile(profile_name)
+            
+            ProfileEditDialog(self, self.uploader, profile_name, profile)
+        except Exception as e:
+            self.uploader.logger.error(f"Error editing profile: {e}")
+            messagebox.showerror("Error", str(e))
 
     def delete_profile(self):
         """Delete selected profile"""
-        selection = self.profile_listbox.curselection()
-        if not selection:
-            messagebox.showwarning("Warning", "Select a profile first", parent=self)
-            return
+        try:
+            selected = self.profile_listbox.curselection()
+            if not selected:
+                messagebox.showwarning("Warning", "No profile selected")
+                return
+            
+            index = selected[0]
+            profile_name = self.profile_listbox.get(index).split(' - ')[0]
+            
+            if profile_name == 'default':
+                messagebox.showwarning("Warning", "Cannot delete the default profile")
+                return
+            
+            if messagebox.askyesno("Confirm Delete", f"Delete profile '{profile_name}'?"):
+                if self.uploader.delete_profile(profile_name):
+                    messagebox.showinfo("Success", "Profile deleted")
+                    self.populate_profiles()
+                else:
+                    messagebox.showerror("Error", "Failed to delete profile")
+        except Exception as e:
+            self.uploader.logger.error(f"Error deleting profile: {e}")
+            messagebox.showerror("Error", str(e))
+    
+    def on_close(self):
+        """Close dialog"""
+        self.destroy()
+
+
+class ProfileEditDialog(tk.Toplevel):
+    """Profile editing dialog"""
+    
+    def __init__(self, parent, uploader: GitHubUploader, profile_name: str, profile_data: dict = None):
+        super().__init__(parent)
+        self.title("✏️ Edit Profile")
+        self.geometry("400x300")
+        self.transient(parent)
+        self.grab_set()
+        self.uploader = uploader
+        self.profile_name = profile_name
+        self.profile_data = profile_data or {}
         
-        profile_name = list(self.uploader.profiles.keys())[selection[0]]
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        if profile_name == 'default':
-            messagebox.showwarning("Error", "Cannot delete default profile", parent=self)
-            return
+        # Center window
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.winfo_screenheight() // 2) - (300 // 2)
+        self.geometry(f"400x300+{x}+{y}")
         
-        if messagebox.askyesno("Confirm", f"Delete profile '{profile_name}'?", parent=self):
-            self.uploader.delete_profile(profile_name)
-            messagebox.showinfo("Success", f"Profile '{profile_name}' deleted", parent=self)
-            self.refresh_list()
+        self.create_widgets()
+        
+        if self.profile_name:
+            self.load_profile()
+    
+    def create_widgets(self):
+        """Create profile edit UI"""
+        tk.Label(self, text="Profile Name:",
+                 bg='#0d1117', fg='#c9d1d9',
+                 font=('Segoe UI', 10)).pack(anchor='w', padx=20, pady=(12, 2))
+        
+        self.name_entry = tk.Entry(self, bg='#161b22', fg='#c9d1d9',
+                                  font=('Segoe UI', 10), width=30)
+        self.name_entry.pack(padx=20, pady=8)
+        
+        tk.Label(self, text="Repository Path:",
+                 bg='#0d1117', fg='#c9d1d9',
+                 font=('Segoe UI', 10)).pack(anchor='w', padx=20, pady=(12, 2))
+        
+        self.repo_entry = tk.Entry(self, bg='#161b22', fg='#c9d1d9',
+                                  font=('Segoe UI', 10), width=30)
+        self.repo_entry.pack(padx=20, pady=8)
+        
+        tk.Label(self, text="Remote URL:",
+                 bg='#0d1117', fg='#c9d1d9',
+                 font=('Segoe UI', 10)).pack(anchor='w', padx=20, pady=(12, 2))
+        
+        self.remote_entry = tk.Entry(self, bg='#161b22', fg='#c9d1d9',
+                                    font=('Segoe UI', 10), width=30)
+        self.remote_entry.pack(padx=20, pady=8)
+        
+        tk.Label(self, text="Branch:",
+                 bg='#0d1117', fg='#c9d1d9',
+                 font=('Segoe UI', 10)).pack(anchor='w', padx=20, pady=(12, 2))
+        
+        self.branch_entry = tk.Entry(self, bg='#161b22', fg='#c9d1d9',
+                                    font=('Segoe UI', 10), width=30)
+        self.branch_entry.pack(padx=20, pady=8)
+        
+        # Save button
+        tk.Button(self, text="💾 Save",
+                 command=self.save_profile,
+                 bg='#3fb950', fg='white',
+                 font=('Segoe UI', 10, 'bold'),
+                 relief='flat', cursor='hand2',
+                 padx=20, pady=8).pack(side='bottom', fill='x', padx=20, pady=(8, 12))
+    
+    def load_profile(self):
+        """Load profile data into fields"""
+        try:
+            self.name_entry.insert(0, self.profile_name)
+            self.repo_entry.insert(0, self.profile_data.get('repo_path', ''))
+            self.remote_entry.insert(0, self.profile_data.get('remote_url', ''))
+            self.branch_entry.insert(0, self.profile_data.get('branch', 'main'))
+            
+            # Disable editing for default profile
+            if self.profile_name == 'default':
+                for widget in self.winfo_children():
+                    widget.config(state='disabled')
+                self.name_entry.config(state='normal')
+        except Exception as e:
+            self.uploader.logger.error(f"Error loading profile: {e}")
+    
+    def save_profile(self):
+        """Save profile data"""
+        try:
+            name = self.name_entry.get().strip()
+            repo_path = self.repo_entry.get().strip()
+            remote_url = self.remote_entry.get().strip()
+            branch = self.branch_entry.get().strip() or 'main'
+            
+            if not name or not repo_path or not remote_url:
+                messagebox.showerror("Error", "All fields are required")
+                return
+            
+            if name == 'default':
+                messagebox.showerror("Error", "Cannot edit the default profile")
+                return
+            
+            # Save profile
+            config = {
+                'repo_path': repo_path,
+                'remote_url': remote_url,
+                'branch': branch
+            }
+            self.uploader.save_profile(name, config)
+            
+            messagebox.showinfo("Success", "Profile saved")
+            self.destroy()
+        except Exception as e:
+            self.uploader.logger.error(f"Error saving profile: {e}")
+            messagebox.showerror("Error", str(e))
+    
+    def on_close(self):
+        """Close dialog"""
+        self.destroy()
 
 
 def main():
