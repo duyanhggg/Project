@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, useSearchParams, Navigate } from 'react-router-dom';
 import { CreateProfile } from './pages/CreateProfile.tsx';
 import { ViewProfile } from './pages/ViewProfile.tsx';
+import T1Page from './pages/T1Page.tsx';
 import { decodeProfileData } from './utils';
 
 const ViewPageWrapper: React.FC = () => {
@@ -32,7 +33,8 @@ function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/" element={<CreatePageWrapper />} />
+        <Route path="/" element={<T1Page />} />
+        <Route path="/create" element={<CreatePageWrapper />} />
         <Route path="/view" element={<ViewPageWrapper />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
