@@ -28,6 +28,9 @@ from plyer import notification
 from logging.handlers import RotatingFileHandler
 import io
 import base64
+from tkinter import filedialog
+import ctypes
+from threading import Event
 
 # Language translations
 TRANSLATIONS = {
@@ -1003,17 +1006,180 @@ class SystemTrayManager:
             print(f"Error stopping tray: {e}")
 
 
+class ProgressDialog(tk.Toplevel):
+    """Dialog hiển thị tiến trình upload"""
+    
+    def __init__(self, parent, title="Uploading"):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("500x250")
+        self.transient(parent)
+        self.grab_set()
+        self.resizable(False, False)
+        
+        # Center window
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (500 // 2)
+        y = (self.winfo_screenheight() // 2) - (250 // 2)
+        self.geometry(f"500x250+{x}+{y}")
+        
+        self.configure(bg='#0d1117')
+        self.create_widgets()
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.can_close = False
+    
+    def create_widgets(self):
+        """Create progress UI"""
+        # Title
+        tk.Label(self, text="📤 Uploading to GitHub...",
+                font=('Segoe UI', 14, 'bold'),
+                bg='#0d1117', fg='#58a6ff').pack(pady=20)
+        
+        # Main frame
+        main_frame = tk.Frame(self, bg='#161b22')
+        main_frame.pack(fill='both', expand=True, padx=20, pady=20)
+        
+        # Status label
+        self.status_label = tk.Label(main_frame, text="Initializing...",
+                                     font=('Segoe UI', 10),
+                                     bg='#161b22', fg='#c9d1d9')
+        self.status_label.pack(anchor='w', pady=(0, 12))
+        
+        # Progress bar
+        self.progress = ttk.Progressbar(main_frame, length=400, mode='determinate',
+                                        value=0, maximum=100)
+        self.progress.pack(fill='x', pady=10)
+        
+        # Progress text
+        self.progress_text = tk.Label(main_frame, text="0%",
+                                      font=('Segoe UI', 9),
+                                      bg='#161b22', fg='#8b949e')
+        self.progress_text.pack(anchor='e', pady=(0, 12))
+        
+        # Details
+        self.details_frame = tk.Frame(main_frame, bg='#161b22')
+        self.details_frame.pack(fill='both', expand=True, pady=10)
+        
+        self.details_text = tk.Text(self.details_frame, height=4, width=50,
+                                    bg='#0d1117', fg='#8b949e',
+                                    font=('Courier', 8),
+                                    relief='flat', bd=0)
+        self.details_text.pack(fill='both', expand=True)
+        self.details_text.config(state='disabled')
+        
+        # Cancel button
+        self.cancel_btn = tk.Button(self, text="✋ Cancel",
+                                   command=self.on_close,
+                                   bg='#f85149', fg='white',
+                                   font=('Segoe UI', 10, 'bold'),
+                                   relief='flat', cursor='hand2',
+                                   padx=20, pady=8)
+        self.cancel_btn.pack(pady=10)
+    
+    def update_status(self, status_text: str, progress: int = None):
+        """Update status text and progress"""
+        try:
+            if self.winfo_exists():
+                self.status_label.config(text=status_text)
+                if progress is not None:
+                    self.progress['value'] = progress
+                    self.progress_text.config(text=f"{progress}%")
+                self.update_idletasks()
+        except:
+            pass
+    
+    def add_detail(self, detail: str):
+        """Add detail line"""
+        try:
+            if self.winfo_exists():
+                self.details_text.config(state='normal')
+                self.details_text.insert('end', detail + '\n')
+                self.details_text.see('end')
+                self.details_text.config(state='disabled')
+                self.update_idletasks()
+        except:
+            pass
+    
+    def on_close(self):
+        """Close dialog"""
+        if self.can_close:
+            self.destroy()
+        else:
+            messagebox.showwarning("Warning", "Upload in progress. Please wait.")
+    
+    def finish(self, success=True):
+        """Mark as finished"""
+        self.can_close = True
+        if success:
+            self.progress['value'] = 100
+            self.progress_text.config(text="100%")
+            self.status_label.config(text="✅ Upload Complete!", fg='#3fb950')
+            self.cancel_btn.config(text="✅ Close", bg='#3fb950')
+        else:
+            self.status_label.config(text="❌ Upload Failed", fg='#f85149')
+            self.cancel_btn.config(text="✅ Close", bg='#f85149')
+
+
+class StatusPanel(tk.Frame):
+    """Real-time status panel"""
+    
+    def __init__(self, parent, colors):
+        super().__init__(parent, bg=colors['card'])
+        self.colors = colors
+        
+        # Status items
+        self.status_frame = tk.Frame(self, bg=colors['card'])
+        self.status_frame.pack(fill='x', padx=12, pady=8)
+        
+        self.status_items = {}
+        self.create_status_items()
+    
+    def create_status_items(self):
+        """Create status indicators"""
+        items = [
+            ('repo', '📁 Repository', 'Not configured'),
+            ('branch', '🌿 Branch', 'main'),
+            ('changes', '📝 Changes', '0 files'),
+            ('last_push', '⏰ Last Push', 'Never')
+        ]
+        
+        for key, label, default in items:
+            frame = tk.Frame(self.status_frame, bg=self.colors['card'])
+            frame.pack(side='left', fill='x', expand=True, padx=6)
+            
+            tk.Label(frame, text=label, font=('Segoe UI', 8),
+                    bg=self.colors['card'], fg=self.colors['fg_secondary']).pack(anchor='w')
+            
+            value_label = tk.Label(frame, text=default, font=('Segoe UI', 9, 'bold'),
+                                  bg=self.colors['card'], fg=self.colors['accent'])
+            value_label.pack(anchor='w')
+            
+            self.status_items[key] = value_label
+    
+    def update_status(self, key, value):
+        """Update status item"""
+        try:
+            if key in self.status_items:
+                self.status_items[key].config(text=value)
+        except:
+            pass
+
+
 class GitHubUploaderGUI:
-    """Main GUI Application"""
+    """Main GUI Application - Enhanced"""
     
     def __init__(self, root):
         self.root = root
         self.root.title("GitHub Auto Upload Tool Pro")
-        self.root.geometry("900x700")
+        self.root.geometry("1000x750")
         self.root.resizable(True, True)
         
         self.uploader = GitHubUploader()
         self.uploader.load_profiles()
+        
+        # Animation variables
+        self.upload_in_progress = False
+        self.animation_state = 0
         
         # Apply theme
         self.apply_theme()
@@ -1037,205 +1203,246 @@ class GitHubUploaderGUI:
     
     def create_ui(self):
         """Create main UI"""
-        # Main container
+        # Main container with scrollbar
         main_frame = tk.Frame(self.root, bg=self.colors['bg'])
-        main_frame.pack(fill='both', expand=True, padx=12, pady=12)
+        main_frame.pack(fill='both', expand=True)
         
-        # Title
-        title_label = tk.Label(
-            main_frame,
-            text=self.t('app_title'),
-            font=('Segoe UI', 16, 'bold'),
-            bg=self.colors['bg'],
-            fg=self.colors['accent']
+        # Canvas for scrolling
+        canvas = tk.Canvas(main_frame, bg=self.colors['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient='vertical', command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.colors['bg'])
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        title_label.pack(pady=(0, 12))
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+        
+        # Title with animation
+        title_frame = tk.Frame(scrollable_frame, bg=self.colors['accent'], height=80)
+        title_frame.pack(fill='x', pady=(0, 0))
+        title_frame.pack_propagate(False)
+        
+        title_label = tk.Label(
+            title_frame,
+            text="🚀 GitHub Auto Upload Tool Pro",
+            font=('Segoe UI', 18, 'bold'),
+            bg=self.colors['accent'],
+            fg='white'
+        )
+        title_label.pack(expand=True)
+        
+        # Status panel
+        self.status_panel = StatusPanel(scrollable_frame, self.colors)
+        self.status_panel.pack(fill='x', pady=8, padx=12)
         
         # Quick Actions Section
-        self.create_quick_actions(main_frame)
+        self.create_quick_actions(scrollable_frame)
         
         # Configuration Section
-        self.create_config_section(main_frame)
+        self.create_config_section(scrollable_frame)
         
         # Background Mode Section
-        self.create_bg_section(main_frame)
+        self.create_bg_section(scrollable_frame)
         
         # Utilities Section
-        self.create_utilities_section(main_frame)
+        self.create_utilities_section(scrollable_frame)
     
     def create_quick_actions(self, parent):
-        """Create quick actions section"""
+        """Create quick actions section with enhanced styling"""
         frame = tk.LabelFrame(
             parent,
-            text=self.t('quick_actions'),
+            text="⚡ Quick Actions",
             bg=self.colors['card'],
             fg=self.colors['fg'],
-            font=('Segoe UI', 10, 'bold'),
+            font=('Segoe UI', 11, 'bold'),
             relief='flat',
-            padx=12,
-            pady=12
+            padx=16,
+            pady=16,
+            borderwidth=2
         )
-        frame.pack(fill='x', pady=8)
+        frame.pack(fill='x', pady=12, padx=12)
         
         btn_frame = tk.Frame(frame, bg=self.colors['card'])
         btn_frame.pack(fill='x')
         
         buttons = [
-            (self.t('upload'), self.do_upload, self.colors['success']),
-            (self.t('git_status'), self.show_git_status, self.colors['accent']),
-            (self.t('create_gitignore'), self.create_gitignore, self.colors['warning']),
+            (self.t('upload'), self.do_upload, self.colors['success'], '🚀'),
+            (self.t('git_status'), self.show_git_status, self.colors['accent'], '📊'),
+            (self.t('create_gitignore'), self.create_gitignore, self.colors['warning'], '📝'),
         ]
         
-        for text, command, color in buttons:
-            tk.Button(
+        for text, command, color, emoji in buttons:
+            btn = tk.Button(
                 btn_frame,
-                text=text,
+                text=f"{emoji} {text}",
                 command=command,
                 bg=color,
                 fg='white',
-                font=('Segoe UI', 9, 'bold'),
+                font=('Segoe UI', 10, 'bold'),
                 relief='flat',
                 cursor='hand2',
-                padx=12,
-                pady=8
-            ).pack(side='left', padx=4, expand=True, fill='x')
+                padx=16,
+                pady=12,
+                activebackground=color,
+                activeforeground='white'
+            )
+            btn.pack(side='left', padx=6, expand=True, fill='both')
+            
+            # Hover effect
+            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
+            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
+    
+    def on_button_enter(self, btn):
+        """Button hover effect"""
+        try:
+            btn.config(relief='raised', bd=2)
+        except:
+            pass
+    
+    def on_button_leave(self, btn):
+        """Button leave effect"""
+        try:
+            btn.config(relief='flat', bd=0)
+        except:
+            pass
     
     def create_config_section(self, parent):
         """Create configuration section"""
         frame = tk.LabelFrame(
             parent,
-            text=self.t('configuration'),
+            text="⚙️ Configuration",
             bg=self.colors['card'],
             fg=self.colors['fg'],
-            font=('Segoe UI', 10, 'bold'),
+            font=('Segoe UI', 11, 'bold'),
             relief='flat',
-            padx=12,
-            pady=12
+            padx=16,
+            pady=16,
+            borderwidth=2
         )
-        frame.pack(fill='x', pady=8)
+        frame.pack(fill='x', pady=12, padx=12)
         
         btn_frame = tk.Frame(frame, bg=self.colors['card'])
         btn_frame.pack(fill='x')
         
         buttons = [
-            (self.t('manage_profiles'), self.manage_profiles, self.colors['accent']),
-            (self.t('auto_settings'), self.configure_auto, self.colors['warning']),
-            (self.t('commit_mode'), self.configure_commit_mode, self.colors['success']),
-            (self.t('settings'), self.open_settings, self.colors['fg_secondary']),
+            (self.t('manage_profiles'), self.manage_profiles, self.colors['accent'], '💾'),
+            (self.t('auto_settings'), self.configure_auto, self.colors['warning'], '⏰'),
+            (self.t('commit_mode'), self.configure_commit_mode, self.colors['success'], '📋'),
+            (self.t('settings'), self.open_settings, self.colors['fg_secondary'], '⚙️'),
         ]
         
-        for text, command, color in buttons:
-            tk.Button(
+        for text, command, color, emoji in buttons:
+            btn = tk.Button(
                 btn_frame,
-                text=text,
+                text=f"{emoji} {text}",
                 command=command,
                 bg=color,
                 fg='white',
-                font=('Segoe UI', 9, 'bold'),
+                font=('Segoe UI', 10, 'bold'),
                 relief='flat',
                 cursor='hand2',
                 padx=12,
-                pady=8
-            ).pack(side='left', padx=4, expand=True, fill='x')
+                pady=10,
+                activebackground=color,
+                activeforeground='white'
+            )
+            btn.pack(side='left', padx=4, expand=True, fill='both')
+            
+            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
+            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def create_bg_section(self, parent):
         """Create background mode section"""
         frame = tk.LabelFrame(
             parent,
-            text=self.t('background_mode'),
+            text="🔄 Background Mode",
             bg=self.colors['card'],
             fg=self.colors['fg'],
-            font=('Segoe UI', 10, 'bold'),
+            font=('Segoe UI', 11, 'bold'),
             relief='flat',
-            padx=12,
-            pady=12
+            padx=16,
+            pady=16,
+            borderwidth=2
         )
-        frame.pack(fill='x', pady=8)
+        frame.pack(fill='x', pady=12, padx=12)
         
         btn_frame = tk.Frame(frame, bg=self.colors['card'])
         btn_frame.pack(fill='x')
         
-        tk.Button(
-            btn_frame,
-            text=self.t('start_bg'),
-            command=self.start_background,
-            bg=self.colors['success'],
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            relief='flat',
-            cursor='hand2',
-            padx=12,
-            pady=8
-        ).pack(side='left', padx=4, expand=True, fill='x')
+        buttons = [
+            (self.t('start_bg'), self.start_background, self.colors['success'], '▶️'),
+            (self.t('stop_bg'), self.stop_background, self.colors['danger'], '⏸️'),
+            (self.t('view_status'), self.view_bg_status, self.colors['accent'], '📡'),
+        ]
         
-        tk.Button(
-            btn_frame,
-            text=self.t('stop_bg'),
-            command=self.stop_background,
-            bg=self.colors['danger'],
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            relief='flat',
-            cursor='hand2',
-            padx=12,
-            pady=8
-        ).pack(side='left', padx=4, expand=True, fill='x')
-        
-        tk.Button(
-            btn_frame,
-            text=self.t('view_status'),
-            command=self.view_bg_status,
-            bg=self.colors['accent'],
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            relief='flat',
-            cursor='hand2',
-            padx=12,
-            pady=8
-        ).pack(side='left', padx=4, expand=True, fill='x')
+        for text, command, color, emoji in buttons:
+            btn = tk.Button(
+                btn_frame,
+                text=f"{emoji} {text}",
+                command=command,
+                bg=color,
+                fg='white',
+                font=('Segoe UI', 10, 'bold'),
+                relief='flat',
+                cursor='hand2',
+                padx=12,
+                pady=10,
+                activebackground=color,
+                activeforeground='white'
+            )
+            btn.pack(side='left', padx=4, expand=True, fill='both')
+            
+            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
+            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def create_utilities_section(self, parent):
         """Create utilities section"""
         frame = tk.LabelFrame(
             parent,
-            text=self.t('utilities'),
+            text="🛠️ Utilities",
             bg=self.colors['card'],
             fg=self.colors['fg'],
-            font=('Segoe UI', 10, 'bold'),
+            font=('Segoe UI', 11, 'bold'),
             relief='flat',
-            padx=12,
-            pady=12
+            padx=16,
+            pady=16,
+            borderwidth=2
         )
-        frame.pack(fill='x', pady=8)
+        frame.pack(fill='x', pady=12, padx=12)
         
         btn_frame = tk.Frame(frame, bg=self.colors['card'])
         btn_frame.pack(fill='x')
         
-        tk.Button(
-            btn_frame,
-            text=self.t('view_logs'),
-            command=self.view_logs,
-            bg=self.colors['fg_secondary'],
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            relief='flat',
-            cursor='hand2',
-            padx=12,
-            pady=8
-        ).pack(side='left', padx=4, expand=True, fill='x')
+        buttons = [
+            (self.t('view_logs'), self.view_logs, self.colors['fg_secondary'], '📄'),
+            (self.t('exit'), self.on_close, self.colors['danger'], '🚪'),
+        ]
         
-        tk.Button(
-            btn_frame,
-            text=self.t('exit'),
-            command=self.on_close,
-            bg=self.colors['danger'],
-            fg='white',
-            font=('Segoe UI', 9, 'bold'),
-            relief='flat',
-            cursor='hand2',
-            padx=12,
-            pady=8
-        ).pack(side='left', padx=4, expand=True, fill='x')
+        for text, command, color, emoji in buttons:
+            btn = tk.Button(
+                btn_frame,
+                text=f"{emoji} {text}",
+                command=command,
+                bg=color,
+                fg='white',
+                font=('Segoe UI', 10, 'bold'),
+                relief='flat',
+                cursor='hand2',
+                padx=12,
+                pady=10,
+                activebackground=color,
+                activeforeground='white'
+            )
+            btn.pack(side='left', padx=4, expand=True, fill='both')
+            
+            btn.bind("<Enter>", lambda e, b=btn: self.on_button_enter(b))
+            btn.bind("<Leave>", lambda e, b=btn: self.on_button_leave(b))
     
     def setup_tray(self):
         """Setup system tray"""
@@ -1243,46 +1450,108 @@ class GitHubUploaderGUI:
         Thread(target=self.tray.create_icon, daemon=True).start()
     
     def do_upload(self):
-        """Execute upload"""
+        """Execute upload with progress dialog"""
         if not self.uploader.repo_path:
-            messagebox.showerror(self.t('error'), "Repository path not configured!")
+            messagebox.showerror(self.t('error'), "❌ Repository path not configured!")
             return
+        
+        if self.upload_in_progress:
+            messagebox.showwarning(self.t('warning'), "⚠️ Upload already in progress!")
+            return
+        
+        # Create progress dialog
+        progress = ProgressDialog(self.root, "📤 GitHub Upload")
         
         def do_upload_thread():
             try:
-                # Status updates
-                def update_status(msg):
-                    try:
-                        if self.root.winfo_exists():
-                            self.root.after(0, lambda: print(msg))
-                    except:
-                        pass
+                self.upload_in_progress = True
                 
-                update_status(self.t('pulling'))
+                # Stage 1: Pull
+                progress.update_status("📥 Pulling latest changes...", 15)
+                progress.add_detail("$ git pull origin main")
                 if not self.uploader.git_pull():
-                    raise Exception("Pull failed")
+                    progress.add_detail("⚠️ Pull completed (no changes or auto-pull disabled)")
+                else:
+                    progress.add_detail("✅ Pull successful")
                 
-                update_status(self.t('uploading'))
+                # Stage 2: Add files
+                progress.update_status("📂 Adding files...", 35)
+                progress.add_detail("$ git add -A")
                 if not self.uploader.git_add_all():
-                    raise Exception("Git add failed")
+                    progress.add_detail("ℹ️ No files to add")
+                else:
+                    progress.add_detail("✅ Files added successfully")
                 
+                # Stage 3: Commit
+                progress.update_status("💾 Creating commit...", 55)
+                progress.add_detail(f"$ git commit -m 'Auto update'")
                 if not self.uploader.git_commit(""):
-                    raise Exception("Commit failed")
+                    progress.add_detail("⚠️ Nothing to commit (working directory clean)")
+                else:
+                    progress.add_detail("✅ Commit created successfully")
                 
+                # Stage 4: Push
+                progress.update_status("🚀 Pushing to GitHub...", 80)
+                progress.add_detail(f"$ git push -u origin {self.uploader.branch}")
                 if not self.uploader.git_push():
-                    raise Exception("Push failed")
+                    raise Exception("Push failed - check network and credentials")
+                else:
+                    progress.add_detail("✅ Push successful")
                 
-                messagebox.showinfo(self.t('success'), self.t('upload_success'))
+                # Success
+                progress.update_status("✅ Upload Complete!", 100)
+                progress.add_detail("\n✨ All operations completed successfully!")
+                progress.finish(success=True)
+                
                 self.refresh_ui()
                 
+                # Auto-close after 2 seconds
+                self.root.after(2000, progress.destroy)
+                
             except Exception as e:
-                messagebox.showerror(self.t('error'), f"{self.t('upload_failed')}: {str(e)}")
+                progress.update_status(f"❌ Error: {str(e)}", 0)
+                progress.add_detail(f"\n❌ {str(e)}")
+                progress.finish(success=False)
+                self.uploader.logger.error(f"Upload error: {e}")
+            
+            finally:
+                self.upload_in_progress = False
         
         Thread(target=do_upload_thread, daemon=True).start()
     
     def show_git_status(self):
         """Show git status"""
-        self.uploader.show_git_status()
+        try:
+            status = self.uploader._git("status")
+            if status:
+                dialog = tk.Toplevel(self.root)
+                dialog.title("📊 Git Status")
+                dialog.geometry("700x500")
+                dialog.transient(self.root)
+                dialog.configure(bg=self.colors['bg'])
+                
+                # Center
+                dialog.update_idletasks()
+                x = (dialog.winfo_screenwidth() // 2) - (700 // 2)
+                y = (dialog.winfo_screenheight() // 2) - (500 // 2)
+                dialog.geometry(f"700x500+{x}+{y}")
+                
+                text_widget = tk.Text(dialog, bg=self.colors['card'],
+                                     fg=self.colors['fg'],
+                                     font=('Courier', 9),
+                                     padx=12, pady=12)
+                text_widget.pack(fill='both', expand=True, padx=12, pady=12)
+                text_widget.insert('1.0', status)
+                text_widget.config(state='disabled')
+                
+                tk.Button(dialog, text="✅ Close", command=dialog.destroy,
+                         bg=self.colors['success'], fg='white',
+                         font=('Segoe UI', 10, 'bold')).pack(pady=8)
+            else:
+                messagebox.showerror(self.t('error'), "❌ Cannot get git status")
+        except Exception as e:
+            self.uploader.logger.error(f"Error showing status: {e}")
+            messagebox.showerror(self.t('error'), str(e))
     
     def create_gitignore(self):
         """Create .gitignore"""
@@ -1523,17 +1792,17 @@ class GitHubUploaderGUI:
     
     def start_background(self):
         """Start background mode"""
-        messagebox.showinfo(self.t('info'), "Background mode started")
+        messagebox.showinfo(self.t('info'), "✅ Background mode started!")
         self.uploader.logger.info("Background mode started")
     
     def stop_background(self):
         """Stop background mode"""
-        messagebox.showinfo(self.t('info'), "Background mode stopped")
+        messagebox.showinfo(self.t('info'), "⏸️ Background mode stopped!")
         self.uploader.logger.info("Background mode stopped")
     
     def view_bg_status(self):
         """View background status"""
-        messagebox.showinfo(self.t('info'), "Background mode: Active")
+        messagebox.showinfo(self.t('info'), "📡 Background mode: Active")
     
     def view_logs(self):
         """View application logs"""
@@ -1542,20 +1811,36 @@ class GitHubUploaderGUI:
             if log_file:
                 os.startfile(str(log_file[-1]))
             else:
-                messagebox.showinfo(self.t('info'), "No logs found")
+                messagebox.showinfo(self.t('info'), "📄 No logs found")
         except Exception as e:
             messagebox.showerror(self.t('error'), str(e))
     
     def refresh_ui(self):
-        """Refresh UI"""
+        """Refresh UI status"""
         try:
-            # Update status labels if exist
-            pass
+            # Update status panel
+            repo_name = Path(self.uploader.repo_path).name if self.uploader.repo_path else "Not set"
+            self.status_panel.update_status('repo', f"📁 {repo_name}")
+            self.status_panel.update_status('branch', f"🌿 {self.uploader.branch}")
+            
+            # Get file count
+            try:
+                status_output = self.uploader._git("status --porcelain")
+                file_count = len(status_output.split('\n')) if status_output else 0
+                self.status_panel.update_status('changes', f"📝 {file_count} files")
+            except:
+                self.status_panel.update_status('changes', "📝 0 files")
+            
+            self.status_panel.update_status('last_push', f"⏰ {self.uploader.last_commit_date or 'Never'}")
         except Exception as e:
             self.uploader.logger.error(f"Error refreshing UI: {e}")
     
     def on_close(self):
         """Handle window close"""
+        if self.upload_in_progress:
+            if not messagebox.askyesno(self.t('confirm'), "Upload in progress. Exit anyway?"):
+                return
+        
         if self.uploader.minimize_to_tray:
             self.root.withdraw()
             messagebox.showinfo(self.t('info'), self.t('minimize_info'))
@@ -1566,6 +1851,198 @@ class GitHubUploaderGUI:
             except:
                 pass
             self.root.quit()
+
+
+class ProfileDialog(tk.Toplevel):
+    """Dialog để quản lý profiles"""
+    
+    def __init__(self, parent, uploader: GitHubUploader):
+        super().__init__(parent.root)
+        self.parent = parent
+        self.uploader = uploader
+        self.transient(parent.root)
+        self.grab_set()
+        self.title("💾 Manage Profiles")
+        self.geometry("600x450")
+        
+        try:
+            self.configure(bg=parent.colors['bg'])
+        except (AttributeError, KeyError):
+            self.configure(bg='#0d1117')
+        
+        self.resizable(False, False)
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (600 // 2)
+        y = (self.winfo_screenheight() // 2) - (450 // 2)
+        self.geometry(f"600x450+{x}+{y}")
+        
+        self.create_widgets()
+
+    def create_widgets(self):
+        """Create profile management UI"""
+        tk.Label(self, text="💾 Manage Profiles", font=('Segoe UI', 14, 'bold'),
+                bg=self.parent.colors['bg'], fg=self.parent.colors['fg']).pack(pady=12)
+        
+        # Profile list frame
+        list_frame = tk.Frame(self, bg=self.parent.colors['card'])
+        list_frame.pack(fill='both', expand=True, padx=12, pady=10)
+        
+        # Listbox with scrollbar
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+        
+        self.profile_listbox = tk.Listbox(
+            list_frame,
+            yscrollcommand=scrollbar.set,
+            bg=self.parent.colors['card'],
+            fg=self.parent.colors['fg'],
+            selectmode='single',
+            font=('Segoe UI', 10)
+        )
+        self.profile_listbox.pack(fill='both', expand=True, padx=8, pady=8)
+        scrollbar.config(command=self.profile_listbox.yview)
+        
+        # Load profiles
+        self.refresh_list()
+        
+        # Button frame
+        btn_frame = tk.Frame(self, bg=self.parent.colors['bg'])
+        btn_frame.pack(fill='x', padx=12, pady=12)
+        
+        buttons = [
+            ("➕ New", self.new_profile, self.parent.colors['success']),
+            ("✏️ Edit", self.edit_profile, self.parent.colors['accent']),
+            ("🔄 Load", self.load_profile, self.parent.colors['warning']),
+            ("🗑️ Delete", self.delete_profile, self.parent.colors['danger']),
+        ]
+        
+        for text, cmd, color in buttons:
+            tk.Button(btn_frame, text=text, command=cmd,
+                     bg=color, fg='white',
+                     font=('Segoe UI', 9, 'bold'), relief='flat',
+                     cursor='hand2', padx=12, pady=6).pack(side='left', padx=4)
+        
+        tk.Button(btn_frame, text="✅ Close", command=self.destroy,
+                 bg=self.parent.colors['fg_tertiary'], fg='white',
+                 font=('Segoe UI', 9, 'bold'), relief='flat',
+                 cursor='hand2', padx=12, pady=6).pack(side='right', padx=4)
+
+    def refresh_list(self):
+        """Refresh profile list"""
+        self.profile_listbox.delete(0, 'end')
+        current = self.uploader.current_profile
+        for i, name in enumerate(self.uploader.profiles.keys()):
+            label = f"⭐ {name}" if name == current else f"  {name}"
+            self.profile_listbox.insert(i, label)
+
+    def new_profile(self):
+        """Create new profile"""
+        name = simpledialog.askstring("New Profile", "Enter profile name:", parent=self)
+        if not name:
+            return
+        
+        if name in self.uploader.profiles:
+            messagebox.showwarning("Error", "Profile already exists", parent=self)
+            return
+        
+        self._edit_profile_dialog(name, {})
+
+    def edit_profile(self):
+        """Edit selected profile"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Warning", "Select a profile first", parent=self)
+            return
+        
+        profile_name = list(self.uploader.profiles.keys())[selection[0]]
+        profile = self.uploader.get_profile(profile_name)
+        self._edit_profile_dialog(profile_name, profile)
+
+    def _edit_profile_dialog(self, profile_name: str, profile: dict):
+        """Edit profile dialog"""
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Edit Profile: {profile_name}")
+        dialog.geometry("400x300")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(bg=self.parent.colors['bg'])
+        
+        tk.Label(dialog, text=f"✏️ Edit Profile: {profile_name}", font=('Segoe UI', 12, 'bold'),
+                bg=self.parent.colors['bg'], fg=self.parent.colors['fg']).pack(pady=12)
+        
+        tk.Label(dialog, text="Repository Path:", bg=self.parent.colors['bg'],
+                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
+        repo_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
+                             fg=self.parent.colors['fg'], width=40)
+        repo_entry.insert(0, profile.get('repo_path', ''))
+        repo_entry.pack(padx=12, pady=4)
+        
+        tk.Label(dialog, text="Remote URL:", bg=self.parent.colors['bg'],
+                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
+        remote_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
+                               fg=self.parent.colors['fg'], width=40)
+        remote_entry.insert(0, profile.get('remote_url', ''))
+        remote_entry.pack(padx=12, pady=4)
+        
+        tk.Label(dialog, text="Branch:", bg=self.parent.colors['bg'],
+                fg=self.parent.colors['fg']).pack(anchor='w', padx=12, pady=(8, 2))
+        branch_entry = tk.Entry(dialog, bg=self.parent.colors['card'],
+                               fg=self.parent.colors['fg'], width=40)
+        branch_entry.insert(0, profile.get('branch', 'main'))
+        branch_entry.pack(padx=12, pady=4)
+        
+        def save():
+            self.uploader.save_profile(profile_name, {
+                'repo_path': repo_entry.get().strip(),
+                'remote_url': remote_entry.get().strip(),
+                'branch': branch_entry.get().strip() or 'main'
+            })
+            messagebox.showinfo("Success", f"Profile '{profile_name}' saved", parent=dialog)
+            dialog.destroy()
+            self.refresh_list()
+        
+        tk.Button(dialog, text="✅ Save", command=save,
+                 bg=self.parent.colors['success'], fg='white',
+                 font=('Segoe UI', 10, 'bold'), relief='flat',
+                 cursor='hand2', padx=16, pady=8).pack(pady=12)
+
+    def load_profile(self):
+        """Load selected profile"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Warning", "Select a profile first", parent=self)
+            return
+        
+        profile_name = list(self.uploader.profiles.keys())[selection[0]]
+        profile = self.uploader.get_profile(profile_name)
+        
+        self.uploader.repo_path = profile.get('repo_path', '')
+        self.uploader.remote_url = profile.get('remote_url', '')
+        self.uploader.branch = profile.get('branch', 'main')
+        self.uploader.current_profile = profile_name
+        self.uploader.save_config()
+        
+        messagebox.showinfo("Success", f"Profile '{profile_name}' loaded", parent=self)
+        self.parent.refresh_ui()
+        self.refresh_list()
+
+    def delete_profile(self):
+        """Delete selected profile"""
+        selection = self.profile_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Warning", "Select a profile first", parent=self)
+            return
+        
+        profile_name = list(self.uploader.profiles.keys())[selection[0]]
+        
+        if profile_name == 'default':
+            messagebox.showwarning("Error", "Cannot delete default profile", parent=self)
+            return
+        
+        if messagebox.askyesno("Confirm", f"Delete profile '{profile_name}'?", parent=self):
+            self.uploader.delete_profile(profile_name)
+            messagebox.showinfo("Success", f"Profile '{profile_name}' deleted", parent=self)
+            self.refresh_list()
 
 
 def main():
