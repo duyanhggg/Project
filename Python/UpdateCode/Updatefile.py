@@ -1132,6 +1132,24 @@ class SystemTrayManager:
         """Stop background từ tray"""
         self.gui_app.root.after(0, self.gui_app.stop_background)
 
+    def show_window(self, icon=None, item=None):
+        """Show/restore window from tray"""
+        try:
+            self.gui_app.root.deiconify()
+            self.gui_app.root.lift()
+            self.gui_app.root.focus()
+        except Exception as e:
+            print(f"Error showing window: {e}")
+
+    def stop(self):
+        """Stop system tray"""
+        try:
+            if self.icon:
+                self.icon.stop()
+                self.is_running = False
+        except Exception as e:
+            print(f"Error stopping tray: {e}")
+    
     # ...existing code...
 
 
